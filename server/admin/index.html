@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JobBot Backend Admin</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #333; }
+    h1 { font-size: 20px; margin-bottom: 16px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    input[type="text"] { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; min-width: 240px; }
+    button { padding: 8px 12px; border: none; border-radius: 6px; background: #2f6fed; color: #fff; cursor: pointer; }
+    button.secondary { background: #666; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 8px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+    .muted { color: #777; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>JobBot Backend Admin</h1>
+
+  <div class="card">
+    <h2>Upload Template JSON</h2>
+    <div class="row">
+      <input type="text" id="template-name" placeholder="Template name (optional)">
+      <input type="text" id="template-api-key" placeholder="OpenAI API key (required)">
+      <input type="file" id="template-file" accept=".json">
+      <button id="upload-btn">Upload</button>
+    </div>
+    <p class="muted">Uploads a JSON resume template and OpenAI API key to the backend.</p>
+  </div>
+
+  <div class="card">
+    <h2>Templates</h2>
+    <div class="row">
+      <button class="secondary" id="refresh-btn">Refresh</button>
+    </div>
+    <ul id="template-list"></ul>
+  </div>
+
+  <div class="card">
+    <h2>Template JSON Format</h2>
+    <p class="muted">Use this structure when creating a resume template JSON.</p>
+    <pre class="muted" style="background:#f7f7f7;padding:12px;border-radius:6px;overflow:auto;white-space:pre;">
+{
+  "personalInfo": {
+    "name": "Full Name",
+    "title": "Senior Software Engineer",
+    "email": "name@email.com",
+    "phone": "+1 555-555-5555",
+    "location": "City, ST",
+    "linkedin": "https://linkedin.com/in/username",
+    "github": "https://github.com/username"
+  },
+  "summary": "Short professional summary.",
+  "experience": [
+    {
+      "title": "Software Engineer",
+      "company": "Company Name",
+      "startDate": "Jan 2021",
+      "endDate": "Feb 2024",
+      "location": "City, ST",
+      "highlights": [
+        "Achievement or impact bullet",
+        "Another bullet"
+      ],
+      "technologies": ["Java", "Angular", "AWS"]
+    }
+  ],
+  "education": [
+    {
+      "school": "University Name",
+      "degree": "B.S. Computer Science",
+      "faculty": "Major / Minor",
+      "startDate": "Aug 2017",
+      "endDate": "May 2021"
+    }
+  ],
+  "skills": {
+    "frontend": ["React", "TypeScript"],
+    "backend": ["Node.js", "Python"],
+    "databases": ["PostgreSQL", "Redis"],
+    "cloud_devops": ["AWS", "Docker"],
+    "testing": ["Unit Testing", "Integration Testing"]
+  },
+  "certifications": []
+}
+    </pre>
+  </div>
+
+  <script>
+    const listEl = document.getElementById('template-list');
+    const refreshBtn = document.getElementById('refresh-btn');
+    const uploadBtn = document.getElementById('upload-btn');
+
+    async function loadTemplates() {
+      const res = await fetch('/api/templates');
+      const data = await res.json();
+      listEl.innerHTML = '';
+      const templates = data.templates || [];
+      if (!templates.length) {
+        const li = document.createElement('li');
+        li.textContent = 'No templates uploaded';
+        listEl.appendChild(li);
+        return;
+      }
+      for (const t of templates) {
+        const li = document.createElement('li');
+        const name = document.createElement('span');
+        name.textContent = `${t.name || t.id}${t.hasApiKey ? '' : ' (missing API key)'}`;
+        const meta = document.createElement('span');
+        meta.className = 'muted';
+        meta.textContent = t.updatedAt || '';
+        li.appendChild(name);
+        li.appendChild(meta);
+        listEl.appendChild(li);
+      }
+    }
+
+    uploadBtn.addEventListener('click', async () => {
+      const fileInput = document.getElementById('template-file');
+      const nameInput = document.getElementById('template-name');
+      const apiKeyInput = document.getElementById('template-api-key');
+      if (!fileInput.files.length) {
+        alert('Select a JSON file first.');
+        return;
+      }
+      if (!apiKeyInput.value.trim()) {
+        alert('OpenAI API key is required.');
+        return;
+      }
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      if (nameInput.value.trim()) {
+        formData.append('name', nameInput.value.trim());
+      }
+      formData.append('apiKey', apiKeyInput.value.trim());
+      const res = await fetch('/api/templates/upload', { method: 'POST', body: formData });
+      if (!res.ok) {
+        alert('Upload failed');
+        return;
+      }
+      nameInput.value = '';
+      apiKeyInput.value = '';
+      fileInput.value = '';
+      await loadTemplates();
+    });
+
+    refreshBtn.addEventListener('click', loadTemplates);
+    loadTemplates();
+  </script>
+</body>
+</html>
