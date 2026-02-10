@@ -467,6 +467,9 @@ STRICT CONTENT RULES:
 37. Mandatory skills:
     a. Frontend must always include React, JavaScript, and TypeScript
     b. Backend must always include Node.js and Python
+    c. Cloud & DevOps must always include AWS, GCP, and Azure, CI/CD, Docker, and Terraform
+    d. Databases must always include PostgreSQL and Redis
+    e. Testing must always include Unit Testing and Integration Testing
 
 38. All job-description technologies must appear in both Skills and Experience.
 
