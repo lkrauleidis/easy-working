@@ -98,6 +98,10 @@
           <input type="text" id="template-filename" placeholder="e.g., john-smith-resume">
         </div>
         <div class="field">
+          <label for="template-api-key">OpenAI API key (required)</label>
+          <input type="text" id="template-api-key" placeholder="sk-..." required>
+        </div>
+        <div class="field">
           <label for="template-file">Template JSON file</label>
           <input type="file" id="template-file" accept=".json">
         </div>
@@ -224,8 +228,13 @@
         const fileInput = document.getElementById('template-file');
         const filenameInput = document.getElementById('template-filename');
         const usernameInput = document.getElementById('template-username');
+        const apiKeyInput = document.getElementById('template-api-key');
         if (!fileInput.files.length) {
           alert('Select a JSON file first.');
+          return;
+        }
+        if (!apiKeyInput.value.trim()) {
+          alert('OpenAI API key is required.');
           return;
         }
         const formData = new FormData();
@@ -236,6 +245,7 @@
         if (usernameInput.value.trim()) {
           formData.append('username', usernameInput.value.trim());
         }
+        formData.append('openaiKey', apiKeyInput.value.trim());
         const res = await fetch('/api/templates/upload', { method: 'POST', body: formData });
         if (!res.ok) {
           alert('Upload failed');
@@ -243,6 +253,7 @@
         }
         filenameInput.value = '';
         usernameInput.value = '';
+        apiKeyInput.value = '';
         fileInput.value = '';
         await loadTemplates();
       });

@@ -13,7 +13,6 @@ const PORT = process.env.PORT || 3000;
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://duicyjsjljjhhfnnzqep.supabase.co';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable__ggeLPXwqHIIGoNqp6MFNg_osQXN5Wd';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const TEMPLATES_TABLE = process.env.TEMPLATES_TABLE || 'templates';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -26,7 +25,7 @@ app.use(express.json({ limit: '2mb' }));
 async function readTemplateRecord(id) {
   const { data, error } = await supabase
     .from(TEMPLATES_TABLE)
-    .select('id, username, filename, json_data, created_at, updated_at')
+    .select('id, username, filename, json_data, openai_key, created_at, updated_at')
     .eq('id', id)
     .maybeSingle();
   if (error) {
@@ -38,7 +37,7 @@ async function readTemplateRecord(id) {
 async function listTemplates() {
   const { data, error } = await supabase
     .from(TEMPLATES_TABLE)
-    .select('id, username, filename, json_data, created_at, updated_at')
+    .select('id, username, filename, openai_key, created_at, updated_at')
     .order('created_at', { ascending: false });
   if (error) {
     throw new Error(error.message);
@@ -48,7 +47,7 @@ async function listTemplates() {
     name: row.filename || row.id,
     username: row.username || row.filename || row.id,
     updatedAt: row.updated_at || row.created_at || null,
-    hasApiKey: !!OPENAI_API_KEY
+    hasApiKey: !!row.openai_key
   }));
 }
 
@@ -56,11 +55,13 @@ async function writeTemplate(payload) {
   const data = payload.data || payload;
   const filename = payload.filename || payload.name || data.name || 'Resume Template';
   const username = payload.username || filename;
+  const openaiKey = payload.openaiKey || payload.apiKey || '';
 
   const insertPayload = {
     filename,
     username,
-    json_data: data
+    json_data: data,
+    openai_key: openaiKey
   };
 
   const { data: rows, error } = await supabase
@@ -134,10 +135,15 @@ app.post('/api/templates/upload', upload.single('file'), async (req, res) => {
       json.name ||
       req.file.originalname.replace(/\.json$/i, '');
     const username = (req.body.username || '').trim() || filename;
+    const openaiKey = (req.body.openaiKey || req.body.apiKey || '').trim();
+    if (!openaiKey) {
+      return res.status(400).json({ error: 'Missing OpenAI API key' });
+    }
     const payload = {
       filename,
       username,
-      data: json
+      data: json,
+      openaiKey
     };
     const record = await writeTemplate(payload);
     res.status(201).json({
@@ -243,21 +249,20 @@ app.post('/api/generate', async (req, res) => {
       return res.status(400).json({ error: 'Missing templateId or jobDescription' });
     }
 
-    if (!OPENAI_API_KEY) {
-      return res.status(400).json({ error: 'Missing OPENAI_API_KEY on server' });
-    }
-
     const record = await readTemplateRecord(templateId);
     if (!record) {
       return res.status(404).json({ error: 'Template not found' });
     }
+    if (!record.openai_key) {
+      return res.status(400).json({ error: 'Missing OpenAI API key for this template' });
+    }
 
-    const jdAnalysis = await analyzeJobDescription(OPENAI_API_KEY, jobDescription);
+    const jdAnalysis = await analyzeJobDescription(record.openai_key, jobDescription);
     const finalPosition = position || jdAnalysis.position || 'Position';
     const finalCompany = company || jdAnalysis.company || 'Company';
 
     const tailoredContent = await generateTailoredContent(
-      OPENAI_API_KEY,
+      record.openai_key,
       record.json_data,
       jdAnalysis
     );
