@@ -36,6 +36,6 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:3000 http://127.0.0.1:3000"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://easy-working.onrender.com http://localhost:3000 http://127.0.0.1:3000"
   }
 }

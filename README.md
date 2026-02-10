@@ -1,6 +1,6 @@
 # JobBot - Tailored Resume Generator
 
-A Chrome extension that generates tailored resumes from job descriptions, with templates served by a local Node.js backend.
+A Chrome extension that generates tailored resumes from job descriptions, with templates served by a Node.js backend (local or hosted).
 
 ## Features
 
@@ -20,7 +20,17 @@ A Chrome extension that generates tailored resumes from job descriptions, with t
 
 ## Backend Setup (Node.js)
 
-The extension loads resume templates from the backend. Start the backend first:
+The extension loads resume templates from the backend. You can use the hosted backend or run it locally.
+
+### Hosted Backend (Recommended)
+
+The backend is deployed at:
+
+- `https://easy-working.onrender.com`
+
+### Local Backend (Development)
+
+Start the backend locally:
 
 1. Open a terminal in `server/`.
 2. Run `npm install`.
@@ -39,8 +49,7 @@ Upload JSON resume templates there. The extension will show them in the template
 ## Extension Setup
 
 1. Click the JobBot extension icon to open the side panel.
-2. Go to Settings and set your OpenAI API key.
-3. (Optional) Set the Backend URL if different from `http://localhost:3000`.
+2. Upload templates (and your OpenAI API key) using the backend admin page.
 
 ## Usage
 
@@ -76,8 +85,7 @@ JobBot/
 
 ## Notes
 
-- If you change the backend host or port, update the extension Setting "Backend URL".
-- The extension CSP currently allows `http://localhost:3000` and `http://127.0.0.1:3000` for template fetches.
+- The extension CSP allows `https://easy-working.onrender.com`, `http://localhost:3000`, and `http://127.0.0.1:3000` for backend calls.
 - The AI prompt enforces at least 5 bullets per experience and at least 7 skills per category.
 
 ## License

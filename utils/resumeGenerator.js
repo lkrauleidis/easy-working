@@ -35,6 +35,12 @@ export async function generatePDF(resumeData, fontFamily = 'Calibri') {
     return false;
   };
 
+  const ensureSectionStart = (minBodyHeight = 4.2) => {
+    // Keep section header + at least one body line together
+    const headerHeight = 5 + afterPara;
+    checkPageBreak(headerHeight + minBodyHeight);
+  };
+
   const drawSectionLine = () => {
     yPos += 3;
     doc.setDrawColor(150, 150, 150);
@@ -94,7 +100,7 @@ export async function generatePDF(resumeData, fontFamily = 'Calibri') {
 
   // --- Professional Summary ---
   if (resumeData.summary) {
-    checkPageBreak(15);
+    ensureSectionStart(4.2);
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.text('PROFESSIONAL SUMMARY', marginSide, yPos);
@@ -111,7 +117,7 @@ export async function generatePDF(resumeData, fontFamily = 'Calibri') {
 
   // --- Work Experience ---
   if (resumeData.experience && resumeData.experience.length > 0) {
-    checkPageBreak(15);
+    ensureSectionStart(4.2);
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.text('WORK EXPERIENCE', marginSide, yPos);
@@ -163,7 +169,7 @@ export async function generatePDF(resumeData, fontFamily = 'Calibri') {
 
   // --- Education ---
   if (resumeData.education && resumeData.education.length > 0) {
-    checkPageBreak(12);
+    ensureSectionStart(4.2);
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.text('EDUCATION', marginSide, yPos);
@@ -217,7 +223,7 @@ export async function generatePDF(resumeData, fontFamily = 'Calibri') {
 
   // --- Skills (categorized) ---
   if (resumeData.skills) {
-    checkPageBreak(12);
+    ensureSectionStart(4.0);
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.text('SKILLS', marginSide, yPos);
@@ -260,7 +266,7 @@ export async function generatePDF(resumeData, fontFamily = 'Calibri') {
 
   // --- Certifications ---
   if (resumeData.certifications && resumeData.certifications.length > 0) {
-    checkPageBreak(12);
+    ensureSectionStart(4.0);
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.text('CERTIFICATIONS', marginSide, yPos);
@@ -376,7 +382,9 @@ export async function generateDOCX(resumeData, fontFamily = 'Calibri') {
           size: 6
         }
       },
-      spacing: { before: 200, after: spAfter }
+      spacing: { before: 200, after: spAfter },
+      keepNext: true,
+      keepLines: true
     }));
   };
 

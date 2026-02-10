@@ -49,6 +49,10 @@
   padding-bottom: 2pt;
   margin-top: 12pt;
   margin-bottom: 6pt;
+  break-after: avoid;
+  page-break-after: avoid;
+  break-inside: avoid;
+  page-break-inside: avoid;
 }
 
 /* Professional Summary */

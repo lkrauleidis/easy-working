@@ -6,7 +6,7 @@ class PopupController {
     this.currentTab = 'profile';
     this.templates = [];
     this.selectedTemplateId = null;
-    this.backendUrl = 'http://localhost:3000';
+    this.backendUrl = 'https://easy-working.onrender.com/';
     this.resumeData = null;
     this.jdData = null;
     this.generatedResume = null;
@@ -204,7 +204,7 @@ class PopupController {
   }
 
   getBackendBaseUrl() {
-    const url = (this.backendUrl || 'http://localhost:3000').trim();
+    const url = (this.backendUrl || 'https://easy-working.onrender.com').trim();
     return url.replace(/\/+$/, '');
   }
 
@@ -333,6 +333,15 @@ class PopupController {
 
   async generateResume() {
     try {
+      const selectedId = this.selectedTemplateId;
+      if (!selectedId) {
+        throw new Error('No template selected. Please select a template first.');
+      }
+      if (!this.templates?.some(t => t.id === selectedId)) {
+        await this.loadTemplates();
+        throw new Error('Selected template no longer exists on the backend. Please select a template again.');
+      }
+
       this.generateBtn.querySelector('.btn-text').classList.add('hidden');
       this.generateBtn.querySelector('.btn-loading').classList.remove('hidden');
       this.generateBtn.disabled = true;
@@ -570,6 +579,27 @@ class PopupController {
     return { lines: lines.length, height: lines.length * lineHeight };
   }
 
+  renderBulletPdf(doc, text, x, y, maxWidth, fontSize, lineHeight, render = true) {
+    const prefix = '\u2022 ';
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(fontSize);
+    const prefixWidth = doc.getTextWidth(prefix);
+    const textResult = this.renderRichTextPdf(
+      doc,
+      text,
+      x + prefixWidth,
+      y,
+      maxWidth - prefixWidth,
+      fontSize,
+      lineHeight,
+      render
+    );
+    if (render) {
+      doc.text(prefix, x, y);
+    }
+    return { lines: textResult.lines, height: textResult.height };
+  }
+
   renderSegmentsPdf(doc, segments, x, y, maxWidth, fontSize, lineHeight) {
     const runs = [];
     for (const seg of segments) {
@@ -666,6 +696,10 @@ class PopupController {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      if (res.status === 404 && (err.error || '').includes('Template not found')) {
+        await this.loadTemplates();
+        throw new Error('Template not found on backend. Refresh templates or upload it in the admin page.');
+      }
       throw new Error(err.error || `Backend error (${res.status})`);
     }
 
@@ -798,7 +832,9 @@ class PopupController {
 
     const addSectionHeading = (title) => {
       // Keep heading + separator + at least one body line together
-      const minBlock = lineHeight(13) + 0.5 + 0.5 + lineHeight(11) + afterHeading;
+      const headingBlock = lineHeight(13) + afterHeading;
+      const minBodyBlock = lineHeight(11) + afterHeading;
+      const minBlock = headingBlock + minBodyBlock;
       checkPageBreak(minBlock);
       doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
@@ -807,9 +843,9 @@ class PopupController {
       // Section separator line (heading above, content below)
       yPos += 0.5;
       doc.setDrawColor(150, 150, 150);
-      doc.setLineWidth(0.5);
+      doc.setLineWidth(0.25);
       doc.line(margin, yPos, pageWidth - margin, yPos);
-      yPos += 6.0;
+      yPos += afterHeading;
     };
 
     const contact = resumeData.contact || {};
@@ -891,10 +927,9 @@ class PopupController {
           doc.setFontSize(11);
           doc.setFont('helvetica', 'normal');
           for (const bullet of exp.bullets) {
-            const bulletPrefix = '\u2022 ';
-            const bulletText = bulletPrefix + bullet;
-            checkPageBreak(lineHeight(11) + afterBullet);
-            const bulletRender = this.renderRichTextPdf(doc, bulletText, margin, yPos, contentWidth, 11, lineHeight(11));
+            const bulletMeasure = this.renderBulletPdf(doc, bullet, margin, yPos, contentWidth, 11, lineHeight(11), false);
+            checkPageBreak(bulletMeasure.height + afterBullet);
+            const bulletRender = this.renderBulletPdf(doc, bullet, margin, yPos, contentWidth, 11, lineHeight(11), true);
             yPos += bulletRender.height + afterBullet;
           }
         }
