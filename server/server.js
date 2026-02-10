@@ -315,68 +315,111 @@ Key Responsibilities: ${jdAnalysis.keyResponsibilities?.join('; ') || 'Not speci
 Keywords: ${jdAnalysis.keywords?.join(', ') || 'Not specified'}
 
 STRICT CONTENT RULES:
-1. Parse the entire job description first and explicitly extract:
-  - Core responsibilities
-  - Required and preferred technologies
-  - Tools, frameworks, platforms, methodologies
-  - Architecture, scale, performance, reliability, and business-impact keywords
-2. Directly inject job-description keywords and tech stacks into the resume content (Summary, Experience, and Skills) wherever they can logically fit — do not replace them with merely “related” or “similar” terms.
-3. Maximize keyword and tech stack coverage from the job description while maintaining realism and alignment with the existing resume experience.
-4. Do NOT fabricate:
-  - Roles, companies, job titles, or employers
-  - Entirely new project types or domains
-  - Experience that contradicts the original resume
-5. If a job-description technology is not present in the original resume, you MUST still add it:
-  - Integrate it naturally into existing responsibilities, workflows, or environments
-  - Treat it as usage, exposure, collaboration, migration, optimization, or integration — never as a brand-new role
-6. Use past tense for previous roles and present tense only for the current role.
-7. Professional Summary requirements:
-  - Exactly 3–4 lines
-  - Senior-level tone
-  - ATS-optimized but natural (no keyword stuffing)
-  - Must explicitly reference system scale, performance, reliability, architecture, and business impact
-  - Must NOT include company names or personal pronouns
-  - Must include direct job-description keywords and tech stacks
-8. Bold all technology names using double asterisks (e.g., React, Java, AWS) in:
-  - Professional Summary
-  - Experience bullets
-  - Skills
-9. Generate a specific, senior-level targetTitle that:
-  - Closely mirrors the job description title
-  - Aligns with the candidate’s career progression and resume roles
-10. Each role must include 5–7 bullets, following these strict rules:
-  - One sentence per bullet
-  - No paragraphs
-  - No filler or vague statements
-11. Every bullet must follow this exact structure: Action Verb → What was done → Technologies used (bolded) → Outcome/impact
-12. Only 2–3 bullets per role may include measurable impact, such as:
-  - Performance improvements (%)
-  - Scale (users, requests, systems)
-  - Reliability (uptime, error reduction)
-  - Cost, revenue, or time saved
-13. Every bullet must include at least one bolded technology from the job description, unless the bullet is purely leadership, mentorship, or strategy-focused.
-14. Use both:
-  - Technologies already present in the original resume
-  - Technologies explicitly listed in the job description
-15. Bold only the technology names, never entire phrases or sentences.
-16. Include 1–3 bolded technologies per bullet, chosen strictly from job-description priorities.
-17. Skills section must be grouped exactly as follows (no extra or renamed categories):
-  - Frontend
-  - Backend
-  - Databases
-  - Cloud & DevOps
-  - Testing & Quality
-18. Each skills category must contain at least 6 skills, prioritizing job-description technologies first.
-19. Mandatory skills (must always appear):
-  - Frontend: React, JavaScript, TypeScript
-  - Backend: Node.js, Python
-20. All job-description technologies must appear in BOTH:
-  - Skills
-  - Experience bullets
-21. Dates must be formatted exactly as: MMM YYYY - MMM YYYY (e.g., Jan 2021 - Feb 2024)
-22. Resume language must remain senior, impact-driven, and architecture-focused, avoiding junior phrasing.
-23. Provide a job match score between 95 and 98 (inclusive), reflecting aggressive keyword alignment and ATS optimization.
-Return JSON:
+1. Read the entire job description end-to-end before generating any resume content.
+2. Treat the job description as the single source of truth for keywords, technologies,
+   architecture terms, tools, and expectations.
+3. Do not summarize or paraphrase the job description before processing.
+
+4. Scan the full job description line-by-line and extract as many keywords and key
+   tech stacks as possible, capturing them exactly as written.
+5. Collect keywords from the job title, responsibilities, required qualifications,
+   preferred qualifications, nice-to-have sections, and any architecture, scale, or
+   platform descriptions embedded in the text.
+
+6. Classify every extracted keyword into the following mandatory buckets:
+   a. Programming languages and runtimes
+   b. Frontend frameworks and libraries
+   c. Backend frameworks and APIs
+   d. Databases, caching, and data systems
+   e. Cloud platforms and infrastructure
+   f. DevOps, CI/CD, and automation
+   g. Architecture and system design concepts
+   h. Security, compliance, and authentication
+   i. Testing, quality, and reliability
+   j. Performance, scale, and metrics
+   k. Methodologies, processes, and collaboration
+
+7. Do not normalize, replace, or infer technologies during extraction.
+8. All keywords must initially remain literal to the job description wording.
+
+9. Assign a priority to each keyword:
+   a. P1 (Critical): appears in the job title, required section, or multiple times
+   b. P2 (Important): appears once or in preferred sections
+   c. P3 (Supporting): implied by responsibilities or architectural language
+
+10. For each keyword, acceptable variants may be added only as secondary mentions.
+11. The original job-description wording is mandatory and must never be replaced.
+12. Do not substitute one technology for another.
+13. Do not generalize platforms.
+14. Do not infer alternatives.
+
+15. Directly inject extracted job-description keywords and tech stacks into the resume
+    content.
+16. Do not use merely related or similar technologies as substitutes.
+17. Maximize keyword coverage while maintaining logical consistency with the original
+    resume.
+
+18. If a job-description technology does not exist in the original resume, it must
+    still be included by integrating it realistically into existing responsibilities
+    as usage, collaboration, optimization, migration, integration, or exposure.
+19. Never invent new roles, companies, job titles, or project domains.
+
+20. Generate a senior-level target title that closely mirrors the job description
+    title and aligns with the candidate’s career progression.
+
+21. The Professional Summary must be exactly 3–4 lines, senior-level, ATS-optimized,
+    and natural.
+22. The summary must explicitly reference system scale, performance, reliability,
+    architecture, and business impact.
+23. The summary must not include company names or personal pronouns.
+24. The summary must include direct P1 and P2 job-description keywords.
+25. All technology names must be bolded using double asterisks.
+
+26. Use past tense for previous roles and present tense only for the current role.
+27. Each role must contain 5–7 bullets.
+28. Each bullet must be one sentence only.
+29. No paragraphs are allowed.
+
+30. Every experience bullet must follow this exact structure:
+    Action Verb -> What was done -> Technologies used (bolded) -> Outcome or impact
+
+31. Only 2–3 bullets per role may include measurable impact such as percentage
+    improvements, scale, performance, reliability, cost, or time saved.
+
+32. Every bullet must include at least one bolded P1 or P2 technology from the job
+    description unless the bullet is purely leadership, mentorship, or strategy
+    focused.
+33. Each bullet may include 1–3 bolded technologies selected strictly from
+    job-description priorities.
+34. Bold only technology names, never full phrases or sentences.
+
+35. The Skills section must be grouped exactly into the following categories:
+    a. Frontend
+    b. Backend
+    c. Databases
+    d. Cloud & DevOps
+    e. Testing & Quality
+
+36. Each skills category must include at least six skills.
+
+37. Mandatory skills:
+    a. Frontend must always include React, JavaScript, and TypeScript
+    b. Backend must always include Node.js and Python
+
+38. All job-description technologies must appear in both Skills and Experience.
+
+39. Dates for experience and education must be formatted exactly as:
+    MMM YYYY - MMM YYYY
+
+40. Before final output, validate that:
+    a. 100% of P1 keywords are included
+    b. At least 90% of P2 keywords are included
+    c. No fabricated technologies exist
+    d. All keywords are used in logical contexts
+
+41. If validation fails, regenerate the resume until compliance is met.
+
+42. Provide a final job match score between 95 and 98 inclusive.Return JSON:
 {
   "matchScore": 96,
   "targetTitle": "Target Job Title",
