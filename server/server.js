@@ -392,6 +392,7 @@ STRICT CONTENT RULES:
    i. Testing, quality, and reliability
    j. Performance, scale, and metrics
    k. Methodologies, processes, and collaboration
+   l. AI, machine learning, and LLM systems or integrations
 
 7. Do not normalize, replace, or infer technologies during extraction.
 8. All keywords must initially remain literal to the job description wording.
@@ -453,6 +454,13 @@ STRICT CONTENT RULES:
     c. Databases
     d. Cloud & DevOps
     e. Testing & Quality
+    f. Security & Compliance
+    g. AI & LLM Systems
+    h. Architecture & System Design
+    i. Performance, Scale & Metrics
+    j. Methodologies & Collaboration
+    k. Programming Languages & Runtimes
+    l. Soft Skills
 
 36. Each skills category must include at least six skills.
 
