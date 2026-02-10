@@ -1,0 +1,74 @@
+{
+  "personalInfo": {
+    "name": "Patrick Devaughn Tracey",
+    "title": "Senior / Lead Full-Stack Software Engineer",
+    "location": "Houston, TX",
+    "phone": "+1 (206) 809 7210",
+    "email": "patrick.tracey86@zohomail.com"
+  },
+  "summary": "",
+  "experience": [
+    {
+      "company": "Wayfair",
+      "role": "Lead Software Engineer",
+      "location": "Houston, TX",
+      "startDate": "2023-06",
+      "endDate": "Present",
+      "highlights": [],
+      "technologies": []
+    },
+    {
+      "company": "Demand-IQ",
+      "role": "Senior Full-Stack Software Engineer",
+      "location": "Remote",
+      "startDate": "2020-07",
+      "endDate": "2023-03",
+      "highlights": [],
+      "technologies": []
+    },
+    {
+      "company": "Tesla",
+      "role": "Staff Full-Stack Software Engineer",
+      "location": "Palo Alto, CA",
+      "startDate": "2017-01",
+      "endDate": "2020-02",
+      "highlights": [],
+      "technologies": []
+    },
+    {
+      "company": "Presidium Health Corp",
+      "role": "Senior Software Engineer",
+      "location": "Houston, TX",
+      "startDate": "2014-06",
+      "endDate": "2016-12",
+      "highlights": [],
+      "technologies": []
+    },
+    {
+      "company": "C3 AI",
+      "role": "Full-Stack Software Engineer",
+      "location": "Remote",
+      "startDate": "2012-07",
+      "endDate": "2014-05",
+      "highlights": [],
+      "technologies": []
+    }
+  ],
+  "education": [
+    {
+      "institution": "North American University",
+      "degree": "Master of Science in Computer Science",
+      "startDate": "2011-08",
+      "endDate": "2016-05",
+      "notes": "Part-time"
+    }
+  ],
+  "skills": {
+    "frontend": [],
+    "backend": [],
+    "aiSystems": [],
+    "cloudDevOps": [],
+    "testing": [],
+    "securityCompliance": []
+  }
+}

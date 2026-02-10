@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JobBot Backend Admin</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --text: #1f2933;
+      --muted: #69707a;
+      --border: #e1e6ef;
+      --primary: #1f5eff;
+      --primary-dark: #1749c6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .page {
+      max-width: 920px;
+      margin: 32px auto 48px;
+      padding: 0 20px;
+    }
+    h1 { font-size: 24px; margin: 0 0 6px; }
+    .subtitle { color: var(--muted); margin-bottom: 22px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 18px;
+      box-shadow: 0 2px 8px rgba(17, 24, 39, 0.04);
+    }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .field { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
+    label { font-size: 12px; color: var(--muted); }
+    input[type="text"], input[type="file"] {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      min-width: 220px;
+    }
+    button {
+      padding: 10px 14px;
+      border: none;
+      border-radius: 8px;
+      background: var(--primary);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover { background: var(--primary-dark); }
+    button.secondary { background: #5b6470; }
+    ul { list-style: none; padding: 0; margin: 12px 0 0; }
+    li {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .actions { display: flex; gap: 8px; align-items: center; }
+    .btn-danger {
+      background: #d14343;
+    }
+    .btn-danger:hover { background: #b33838; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .tag {
+      background: #eef2ff;
+      color: #2b3ea8;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>JobBot Backend Admin</h1>
+    <div class="subtitle">Manage resume templates stored in Supabase.</div>
+
+    <div class="card">
+      <h2>Upload Template JSON</h2>
+      <div class="row">
+        <div class="field">
+          <label for="template-username">Username (optional)</label>
+          <input type="text" id="template-username" placeholder="e.g., john.smith">
+        </div>
+        <div class="field">
+          <label for="template-filename">Filename (optional)</label>
+          <input type="text" id="template-filename" placeholder="e.g., john-smith-resume">
+        </div>
+        <div class="field">
+          <label for="template-file">Template JSON file</label>
+          <input type="file" id="template-file" accept=".json">
+        </div>
+        <button id="upload-btn">Upload</button>
+      </div>
+      <p class="muted">If username is blank, it will default to the filename.</p>
+    </div>
+
+    <div class="card">
+      <h2>Templates</h2>
+      <div class="row">
+        <button class="secondary" id="refresh-btn">Refresh</button>
+        <span class="muted">Server OpenAI key: <span id="api-key-status" class="tag"></span></span>
+      </div>
+      <ul id="template-list"></ul>
+    </div>
+
+    <div class="card">
+      <h2>Template JSON Format</h2>
+      <p class="muted">Use this structure when creating a resume template JSON.</p>
+      <pre class="muted" style="background:#f7f7f7;padding:12px;border-radius:6px;overflow:auto;white-space:pre;">
+{
+  "personalInfo": {
+    "name": "Full Name",
+    "title": "Senior Software Engineer",
+    "email": "name@email.com",
+    "phone": "+1 555-555-5555",
+    "location": "City, ST",
+    "linkedin": "https://linkedin.com/in/username",
+    "github": "https://github.com/username"
+  },
+  "summary": "Short professional summary.",
+  "experience": [
+    {
+      "title": "Software Engineer",
+      "company": "Company Name",
+      "startDate": "Jan 2021",
+      "endDate": "Feb 2024",
+      "location": "City, ST",
+      "highlights": [
+        "Achievement or impact bullet",
+        "Another bullet"
+      ],
+      "technologies": ["Java", "Angular", "AWS"]
+    }
+  ],
+  "education": [
+    {
+      "school": "University Name",
+      "degree": "B.S. Computer Science",
+      "faculty": "Major / Minor",
+      "startDate": "Aug 2017",
+      "endDate": "May 2021"
+    }
+  ],
+  "skills": {
+    "frontend": ["React", "TypeScript"],
+    "backend": ["Node.js", "Python"],
+    "databases": ["PostgreSQL", "Redis"],
+    "cloud_devops": ["AWS", "Docker"],
+    "testing": ["Unit Testing", "Integration Testing"]
+  },
+  "certifications": []
+}
+      </pre>
+    </div>
+
+    <script>
+      const listEl = document.getElementById('template-list');
+      const refreshBtn = document.getElementById('refresh-btn');
+      const uploadBtn = document.getElementById('upload-btn');
+      const apiKeyStatus = document.getElementById('api-key-status');
+
+      async function loadTemplates() {
+        const res = await fetch('/api/templates');
+        const data = await res.json();
+        listEl.innerHTML = '';
+        const templates = data.templates || [];
+        apiKeyStatus.textContent = templates.length && templates[0].hasApiKey ? 'Set' : 'Missing';
+
+        if (!templates.length) {
+          const li = document.createElement('li');
+          li.textContent = 'No templates uploaded';
+          listEl.appendChild(li);
+          return;
+        }
+
+        for (const t of templates) {
+          const li = document.createElement('li');
+          const left = document.createElement('div');
+          const name = document.createElement('div');
+          name.textContent = t.name || t.id;
+          const meta = document.createElement('div');
+          meta.className = 'muted';
+          meta.textContent = `User: ${t.username || t.name || t.id} • Updated: ${t.updatedAt || '—'}`;
+          left.appendChild(name);
+          left.appendChild(meta);
+
+          const actions = document.createElement('div');
+          actions.className = 'actions';
+          const removeBtn = document.createElement('button');
+          removeBtn.className = 'btn-danger';
+          removeBtn.textContent = 'Remove';
+          removeBtn.addEventListener('click', async () => {
+            if (!confirm(`Remove template "${t.name || t.id}"? This cannot be undone.`)) {
+              return;
+            }
+            const res = await fetch(`/api/templates/${t.id}`, { method: 'DELETE' });
+            if (!res.ok) {
+              alert('Remove failed');
+              return;
+            }
+            await loadTemplates();
+          });
+          actions.appendChild(removeBtn);
+
+          li.appendChild(left);
+          li.appendChild(actions);
+          listEl.appendChild(li);
+        }
+      }
+
+      uploadBtn.addEventListener('click', async () => {
+        const fileInput = document.getElementById('template-file');
+        const filenameInput = document.getElementById('template-filename');
+        const usernameInput = document.getElementById('template-username');
+        if (!fileInput.files.length) {
+          alert('Select a JSON file first.');
+          return;
+        }
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        if (filenameInput.value.trim()) {
+          formData.append('filename', filenameInput.value.trim());
+        }
+        if (usernameInput.value.trim()) {
+          formData.append('username', usernameInput.value.trim());
+        }
+        const res = await fetch('/api/templates/upload', { method: 'POST', body: formData });
+        if (!res.ok) {
+          alert('Upload failed');
+          return;
+        }
+        filenameInput.value = '';
+        usernameInput.value = '';
+        fileInput.value = '';
+        await loadTemplates();
+      });
+
+      refreshBtn.addEventListener('click', loadTemplates);
+      loadTemplates();
+    </script>
+  </div>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JobBot - Resume Tailor</title>
+  <link rel="stylesheet" href="popup.css">
+  <!-- Local libraries for resume generation only -->
+  <script src="../lib/jspdf.umd.min.js"></script>
+  <script src="../lib/docx.umd.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>JobBot</h1>
+      <p class="tagline">AI-Powered Resume Tailoring</p>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="profile">Profile</button>
+      <button class="tab" data-tab="generate">Generate</button>
+    </nav>
+
+    <!-- Profile Tab -->
+    <section id="profile-tab" class="tab-content active">
+      <div id="profile-selector" class="profile-selector">
+        <label class="profile-label">Select Resume Template:</label>
+        <div class="profile-select-row">
+          <select id="template-select"></select>
+          <button class="btn-secondary" id="refresh-templates" title="Refresh template list">Refresh</button>
+        </div>
+        <p class="profile-hint">Templates are loaded from your backend.</p>
+      </div>
+
+    </section>
+
+    <!-- Generate Tab -->
+    <section id="generate-tab" class="tab-content">
+      <div class="jd-section">
+        <div class="section-header">
+          <h3>Job Description</h3>
+          <button class="btn-secondary" id="extract-jd">Extract from Page</button>
+        </div>
+
+        <div class="jd-info">
+          <div class="jd-field">
+            <label>Position:</label>
+            <input type="text" id="position-title" placeholder="e.g., Senior Software Engineer">
+          </div>
+          <div class="jd-field">
+            <label>Company:</label>
+            <input type="text" id="company-name" placeholder="e.g., Google">
+          </div>
+        </div>
+
+        <textarea id="jd-text" placeholder="Paste job description here or click 'Extract from Page'..."></textarea>
+      </div>
+
+      <div class="generate-section">
+        <button class="btn-primary" id="generate-btn" disabled>
+          <span class="btn-text">Generate Tailored Resume</span>
+          <span class="btn-loading hidden">Generating...</span>
+        </button>
+
+        <div id="generate-status" class="generate-status hidden">
+          <div class="progress-bar">
+            <div class="progress-fill"></div>
+          </div>
+          <p class="progress-text"></p>
+        </div>
+      </div>
+
+      <div id="download-section" class="download-section hidden">
+        <h3>Download Resume</h3>
+        <div id="match-score" class="match-score hidden">
+          Match Score: <span id="match-score-value"></span>
+        </div>
+        <p class="download-filename"></p>
+        <div class="download-buttons">
+          <button class="btn-download" id="download-pdf">PDF</button>
+          <button class="btn-download" id="download-docx">DOCX</button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p class="version">v1.0.0</p>
+    </footer>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

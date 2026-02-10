@@ -1,0 +1,663 @@
+const express = require('express');
+const cors = require('cors');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { execFile } = require('child_process');
+const { createClient } = require('@supabase/supabase-js');
+
+const app = express();
+const upload = multer({ storage: multer.memoryStorage() });
+const PORT = process.env.PORT || 3000;
+
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://duicyjsjljjhhfnnzqep.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable__ggeLPXwqHIIGoNqp6MFNg_osQXN5Wd';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const TEMPLATES_TABLE = process.env.TEMPLATES_TABLE || 'templates';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: false }
+});
+
+app.use(cors({ origin: '*' }));
+app.use(express.json({ limit: '2mb' }));
+
+async function readTemplateRecord(id) {
+  const { data, error } = await supabase
+    .from(TEMPLATES_TABLE)
+    .select('id, username, filename, json_data, created_at, updated_at')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    throw new Error(error.message);
+  }
+  return data || null;
+}
+
+async function listTemplates() {
+  const { data, error } = await supabase
+    .from(TEMPLATES_TABLE)
+    .select('id, username, filename, json_data, created_at, updated_at')
+    .order('created_at', { ascending: false });
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (data || []).map(row => ({
+    id: row.id,
+    name: row.filename || row.id,
+    username: row.username || row.filename || row.id,
+    updatedAt: row.updated_at || row.created_at || null,
+    hasApiKey: !!OPENAI_API_KEY
+  }));
+}
+
+async function writeTemplate(payload) {
+  const data = payload.data || payload;
+  const filename = payload.filename || payload.name || data.name || 'Resume Template';
+  const username = payload.username || filename;
+
+  const insertPayload = {
+    filename,
+    username,
+    json_data: data
+  };
+
+  const { data: rows, error } = await supabase
+    .from(TEMPLATES_TABLE)
+    .insert(insertPayload)
+    .select('id, username, filename, json_data, created_at, updated_at')
+    .limit(1);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  return rows && rows[0] ? rows[0] : null;
+}
+
+app.get('/api/templates', async (req, res) => {
+  try {
+    const templates = await listTemplates();
+    res.json({ templates });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/templates/:id', async (req, res) => {
+  try {
+    const record = await readTemplateRecord(req.params.id);
+    if (!record) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    res.json({
+      id: record.id,
+      name: record.filename || record.id,
+      username: record.username || record.filename || record.id,
+      data: record.json_data
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/templates', async (req, res) => {
+  if (!req.body || Object.keys(req.body).length === 0) {
+    return res.status(400).json({ error: 'Missing template data' });
+  }
+  try {
+    const record = await writeTemplate(req.body);
+    if (!record) {
+      return res.status(500).json({ error: 'Failed to save template' });
+    }
+    res.status(201).json({
+      id: record.id,
+      name: record.filename || record.id,
+      username: record.username || record.filename || record.id
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/templates/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'Missing file upload' });
+  }
+
+  try {
+    const raw = req.file.buffer.toString('utf8');
+    const json = JSON.parse(raw);
+    const filename =
+      req.body.filename ||
+      req.body.name ||
+      json.name ||
+      req.file.originalname.replace(/\.json$/i, '');
+    const username = (req.body.username || '').trim() || filename;
+    const payload = {
+      filename,
+      username,
+      data: json
+    };
+    const record = await writeTemplate(payload);
+    res.status(201).json({
+      id: record.id,
+      name: record.filename || record.id,
+      username: record.username || record.filename || record.id
+    });
+  } catch (error) {
+    res.status(400).json({ error: 'Invalid JSON file' });
+  }
+});
+
+app.post('/api/convert-docx-to-pdf', upload.single('file'), async (req, res) => {
+  let tmpDir = null;
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: 'Missing DOCX file upload' });
+    }
+
+    const sofficePath = resolveSofficePath();
+    if (!sofficePath) {
+      return res.status(500).json({
+        error: 'LibreOffice not found. Set SOFFICE_PATH or install LibreOffice.'
+      });
+    }
+
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobbot-'));
+    const docxPath = path.join(tmpDir, 'resume.docx');
+    fs.writeFileSync(docxPath, req.file.buffer);
+
+    await new Promise((resolve, reject) => {
+      execFile(
+        sofficePath,
+        ['--headless', '--convert-to', 'pdf', '--outdir', tmpDir, docxPath],
+        { windowsHide: true },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+
+    const pdfPath = path.join(tmpDir, 'resume.pdf');
+    if (!fs.existsSync(pdfPath)) {
+      throw new Error('PDF conversion failed');
+    }
+
+    const pdfBuffer = fs.readFileSync(pdfPath);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="resume.pdf"');
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('[convert-docx-to-pdf] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (tmpDir) {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  }
+});
+
+function resolveSofficePath() {
+  const envPath = process.env.SOFFICE_PATH || process.env.LIBREOFFICE_PATH;
+  if (envPath && fs.existsSync(envPath)) return envPath;
+
+  const candidates = [
+    'C:\\\\Program Files\\\\LibreOffice\\\\program\\\\soffice.exe',
+    'C:\\\\Program Files (x86)\\\\LibreOffice\\\\program\\\\soffice.exe',
+    'soffice'
+  ];
+  for (const candidate of candidates) {
+    if (candidate === 'soffice') return candidate;
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+app.delete('/api/templates/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from(TEMPLATES_TABLE)
+      .delete()
+      .eq('id', req.params.id)
+      .select('id')
+      .limit(1);
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/generate', async (req, res) => {
+  try {
+    const { templateId, jobDescription, position, company } = req.body || {};
+    if (!templateId || !jobDescription) {
+      return res.status(400).json({ error: 'Missing templateId or jobDescription' });
+    }
+
+    if (!OPENAI_API_KEY) {
+      return res.status(400).json({ error: 'Missing OPENAI_API_KEY on server' });
+    }
+
+    const record = await readTemplateRecord(templateId);
+    if (!record) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    const jdAnalysis = await analyzeJobDescription(OPENAI_API_KEY, jobDescription);
+    const finalPosition = position || jdAnalysis.position || 'Position';
+    const finalCompany = company || jdAnalysis.company || 'Company';
+
+    const tailoredContent = await generateTailoredContent(
+      OPENAI_API_KEY,
+      record.json_data,
+      jdAnalysis
+    );
+
+    if (typeof tailoredContent.matchScore !== 'number') {
+      tailoredContent.matchScore = 96;
+    } else {
+      const score = Math.round(tailoredContent.matchScore);
+      tailoredContent.matchScore = Math.min(98, Math.max(95, score));
+    }
+
+    res.json({
+      success: true,
+      resume: tailoredContent,
+      extractedPosition: finalPosition,
+      extractedCompany: finalCompany
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+async function analyzeJobDescription(apiKey, jobDescription) {
+  const prompt = `Analyze this job description and extract the following in JSON format:
+
+{
+  "position": "exact job title",
+  "company": "company name",
+  "requiredSkills": ["skill1", "skill2"],
+  "preferredSkills": ["skill1", "skill2"],
+  "yearsExperience": "number or range",
+  "keyResponsibilities": ["responsibility1", "responsibility2"],
+  "keywords": ["keyword1", "keyword2"]
+}
+
+Job Description:
+${jobDescription.substring(0, 4000)}
+
+Return ONLY valid JSON.`;
+
+  const response = await callOpenAI(apiKey, prompt, 1500);
+  try {
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    return JSON.parse(response);
+  } catch (error) {
+    console.error('Failed to parse JD analysis. Response:', response);
+    return {
+      position: '',
+      company: '',
+      requiredSkills: [],
+      preferredSkills: [],
+      keywords: []
+    };
+  }
+}
+
+async function generateTailoredContent(apiKey, resumeData, jdAnalysis) {
+  // Normalize template data - handle personalInfo wrapper and field name variants
+  const info = resumeData.personalInfo || resumeData;
+  const name = info.name || resumeData.name || 'Not provided';
+  const headline = info.title || resumeData.headline || resumeData.title || 'Not provided';
+  const email = info.email || resumeData.email || 'Not provided';
+  const phone = info.phone || resumeData.phone || 'Not provided';
+  const location = info.location || resumeData.location || 'Not provided';
+  const linkedin = info.linkedin || resumeData.linkedin || 'Not provided';
+  const website = info.portfolio || resumeData.website || 'Not provided';
+  const github = info.github || resumeData.github || 'Not provided';
+
+  const prompt = `You are a senior technical recruiter and ATS optimization expert.
+Generate a resume that is BOTH ATS-friendly and recruiter-friendly for a software engineering role.
+
+ORIGINAL RESUME:
+Name: ${name}
+Headline: ${headline}
+Email: ${email}
+Phone: ${phone}
+Location: ${location}
+LinkedIn: ${linkedin}
+Website: ${website}
+GitHub: ${github}
+
+Summary: ${resumeData.summary || 'Not provided'}
+
+Experience:
+${formatExperience(resumeData.experience)}
+
+Education:
+${formatEducation(resumeData.education)}
+
+Skills:
+${formatSkills(resumeData.skills)}
+
+JOB REQUIREMENTS:
+Position: ${jdAnalysis.position || 'Not specified'}
+Company: ${jdAnalysis.company || 'Not specified'}
+Required Skills: ${jdAnalysis.requiredSkills?.join(', ') || 'Not specified'}
+Key Responsibilities: ${jdAnalysis.keyResponsibilities?.join('; ') || 'Not specified'}
+Keywords: ${jdAnalysis.keywords?.join(', ') || 'Not specified'}
+
+STRICT CONTENT RULES:
+1. Parse the entire job description first and explicitly extract:
+  - Core responsibilities
+  - Required and preferred technologies
+  - Tools, frameworks, platforms, methodologies
+  - Architecture, scale, performance, reliability, and business-impact keywords
+2. Directly inject job-description keywords and tech stacks into the resume content (Summary, Experience, and Skills) wherever they can logically fit — do not replace them with merely “related” or “similar” terms.
+3. Maximize keyword and tech stack coverage from the job description while maintaining realism and alignment with the existing resume experience.
+4. Do NOT fabricate:
+  - Roles, companies, job titles, or employers
+  - Entirely new project types or domains
+  - Experience that contradicts the original resume
+5. If a job-description technology is not present in the original resume, you MUST still add it:
+  - Integrate it naturally into existing responsibilities, workflows, or environments
+  - Treat it as usage, exposure, collaboration, migration, optimization, or integration — never as a brand-new role
+6. Use past tense for previous roles and present tense only for the current role.
+7. Professional Summary requirements:
+  - Exactly 3–4 lines
+  - Senior-level tone
+  - ATS-optimized but natural (no keyword stuffing)
+  - Must explicitly reference system scale, performance, reliability, architecture, and business impact
+  - Must NOT include company names or personal pronouns
+  - Must include direct job-description keywords and tech stacks
+8. Bold all technology names using double asterisks (e.g., React, Java, AWS) in:
+  - Professional Summary
+  - Experience bullets
+  - Skills
+9. Generate a specific, senior-level targetTitle that:
+  - Closely mirrors the job description title
+  - Aligns with the candidate’s career progression and resume roles
+10. Each role must include 5–7 bullets, following these strict rules:
+  - One sentence per bullet
+  - No paragraphs
+  - No filler or vague statements
+11. Every bullet must follow this exact structure: Action Verb → What was done → Technologies used (bolded) → Outcome/impact
+12. Only 2–3 bullets per role may include measurable impact, such as:
+  - Performance improvements (%)
+  - Scale (users, requests, systems)
+  - Reliability (uptime, error reduction)
+  - Cost, revenue, or time saved
+13. Every bullet must include at least one bolded technology from the job description, unless the bullet is purely leadership, mentorship, or strategy-focused.
+14. Use both:
+  - Technologies already present in the original resume
+  - Technologies explicitly listed in the job description
+15. Bold only the technology names, never entire phrases or sentences.
+16. Include 1–3 bolded technologies per bullet, chosen strictly from job-description priorities.
+17. Skills section must be grouped exactly as follows (no extra or renamed categories):
+  - Frontend
+  - Backend
+  - Databases
+  - Cloud & DevOps
+  - Testing & Quality
+18. Each skills category must contain at least 6 skills, prioritizing job-description technologies first.
+19. Mandatory skills (must always appear):
+  - Frontend: React, JavaScript, TypeScript
+  - Backend: Node.js, Python
+20. All job-description technologies must appear in BOTH:
+  - Skills
+  - Experience bullets
+21. Dates must be formatted exactly as: MMM YYYY - MMM YYYY (e.g., Jan 2021 - Feb 2024)
+22. Resume language must remain senior, impact-driven, and architecture-focused, avoiding junior phrasing.
+23. Provide a job match score between 95 and 98 (inclusive), reflecting aggressive keyword alignment and ATS optimization.
+Return JSON:
+{
+  "matchScore": 96,
+  "targetTitle": "Target Job Title",
+  "contact": {"name": "", "email": "", "phone": "", "location": "", "linkedin": "", "github": ""},
+  "summary": "3-4 line tailored summary",
+  "experience": [{"title": "", "company": "", "dates": "MMM YYYY - MMM YYYY", "location": "", "bullets": ["achievement 1", "achievement 2", "achievement 3", "achievement 4", "achievement 5"]}],
+  "education": [{"school": "University Name", "degree": "Degree", "dates": "MMM YYYY - MMM YYYY", "faculty": "Major/Minor"}],
+  "skills": {
+    "frontend": ["React", "JavaScript", "TypeScript", "...additional skills"],
+    "backend": ["Node.js", "Python", "REST APIs", "Microservices", "...additional skills"],
+    "databases": ["PostgreSQL", "Redis", "NoSQL", "...additional skills"],
+    "cloud_devops": ["AWS", "Docker", "CI/CD", "Terraform", "...additional skills"],
+    "testing": ["Unit Testing", "Integration Testing", "...additional skills"]
+  },
+  "certifications": []
+}
+
+Return ONLY valid JSON.`;
+
+  const response = await callOpenAI(apiKey, prompt, 8000);
+  console.log('[generateTailoredContent] Got response, length:', response?.length);
+  try {
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      console.log('[generateTailoredContent] JSON match found, length:', jsonMatch[0].length);
+      return normalizeGeneratedResume(JSON.parse(jsonMatch[0]));
+    }
+    console.log('[generateTailoredContent] No regex match, trying direct parse');
+    return normalizeGeneratedResume(JSON.parse(response));
+  } catch (error) {
+    console.error('[generateTailoredContent] JSON parse error:', error.message);
+    console.error('[generateTailoredContent] Response (last 300 chars):', response?.substring(response.length - 300));
+    throw new Error('Failed to generate tailored resume. Please try again.');
+  }
+}
+
+function normalizeGeneratedResume(value) {
+  let parsed = value;
+
+  if (typeof parsed === 'string') {
+    parsed = tryParseEmbeddedJson(parsed) ?? parsed;
+  } else if (parsed && typeof parsed === 'object') {
+    if (typeof parsed.text === 'string') {
+      parsed = tryParseEmbeddedJson(parsed.text) ?? parsed;
+    } else if (typeof parsed.output_text === 'string') {
+      parsed = tryParseEmbeddedJson(parsed.output_text) ?? parsed;
+    } else if (Array.isArray(parsed.content)) {
+      const combined = parsed.content
+        .map(block => (block && typeof block.text === 'string' ? block.text : ''))
+        .join('');
+      parsed = tryParseEmbeddedJson(combined) ?? parsed;
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Invalid resume payload from model');
+  }
+
+  const hasContent = Boolean(
+    parsed.summary ||
+    (Array.isArray(parsed.experience) && parsed.experience.length > 0) ||
+    (Array.isArray(parsed.education) && parsed.education.length > 0) ||
+    parsed.skills
+  );
+  if (!hasContent) {
+    throw new Error('Generated resume is missing expected content');
+  }
+
+  return parsed;
+}
+
+function tryParseEmbeddedJson(text) {
+  if (typeof text !== 'string') return null;
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
+function formatSkills(skills) {
+  if (!skills) return 'Not provided';
+  if (Array.isArray(skills)) return skills.join(', ');
+  if (typeof skills === 'object') {
+    const categoryLabels = {
+      frontend: 'Frontend',
+      backend: 'Backend',
+      database: 'Database',
+      security: 'Security',
+      securityCompliance: 'Security & Compliance',
+      ai_llm: 'AI & LLM Systems',
+      aiSystems: 'AI & LLM Systems',
+      cloud_devops: 'Cloud & DevOps',
+      cloudDevOps: 'Cloud & DevOps',
+      testing: 'Testing & Quality',
+      collaboration: 'Collaboration',
+      technical: 'Technical',
+      soft: 'Soft Skills'
+    };
+    const parts = [];
+    for (const [category, items] of Object.entries(skills)) {
+      if (Array.isArray(items) && items.length > 0) {
+        const label = categoryLabels[category] || category;
+        parts.push(`${label}: ${items.join(', ')}`);
+      }
+    }
+    return parts.length > 0 ? parts.join('\n') : 'Not provided';
+  }
+  return String(skills);
+}
+
+function formatExperience(experience) {
+  if (!experience || experience.length === 0) return 'Not provided';
+
+  return experience.map(exp => {
+    const title = exp.title || exp.role || 'Position';
+    const dates = exp.dates || combineDates(exp.startDate, exp.endDate) || '';
+    const bullets = exp.bullets || exp.highlights || [];
+    let text = `${title} at ${exp.company || 'Company'}`;
+    if (dates) text += ` (${dates})`;
+    if (exp.location) text += ` - ${exp.location}`;
+    if (bullets.length > 0) {
+      text += '\n' + bullets.map(b => `  - ${b}`).join('\n');
+    }
+    return text;
+  }).join('\n\n');
+}
+
+function formatEducation(education) {
+  if (!education || education.length === 0) return 'Not provided';
+
+  return education.map(edu => {
+    let text = edu.degree || 'Degree';
+    const school = edu.school || edu.institution || edu.university || '';
+    const dates = edu.dates || combineDates(edu.startDate, edu.endDate) || '';
+    if (school) text += ` - ${school}`;
+    if (dates) text += ` (${dates})`;
+    if (edu.notes) text += ` [${edu.notes}]`;
+    return text;
+  }).join('\n');
+}
+
+function combineDates(start, end) {
+  if (!start && !end) return '';
+  return `${start || ''}${start && end ? ' - ' : ''}${end || ''}`;
+}
+
+async function callOpenAI(apiKey, prompt, maxTokens = 2000) {
+  console.log(`[callOpenAI] Sending request with max_output_tokens: ${maxTokens}`);
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: 'gpt-5.2',
+      instructions: 'You are an expert resume writer. Always respond with valid JSON when requested.',
+      input: prompt,
+      text: { format: { type: 'json_object' } },
+      max_output_tokens: maxTokens,
+      temperature: 0.7
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    console.error('[callOpenAI] API error:', JSON.stringify(error, null, 2));
+    throw new Error(error.error?.message || 'OpenAI API error');
+  }
+
+  const data = await response.json();
+
+  console.log('[callOpenAI] Response keys:', Object.keys(data));
+  console.log('[callOpenAI] Has output_text:', !!data.output_text);
+  console.log('[callOpenAI] Status:', data.status);
+  if (data.usage) {
+    console.log('[callOpenAI] Usage:', JSON.stringify(data.usage));
+  }
+  if (data.incomplete_details) {
+    console.log('[callOpenAI] Incomplete details:', JSON.stringify(data.incomplete_details));
+  }
+
+  // Try multiple response fields - API versions vary
+  let text = data.output_text;
+  if (!text && data.output && Array.isArray(data.output)) {
+    for (const item of data.output) {
+      if (item.type === 'message' && item.content) {
+        for (const block of item.content) {
+          if ((block.type === 'output_text' || block.type === 'text') && block.text) {
+            text = block.text;
+            break;
+          }
+        }
+      }
+      if (text) break;
+    }
+  }
+  if (!text && data.output && Array.isArray(data.output)) {
+    console.log('[callOpenAI] Output types:', data.output.map(item => item.type));
+  }
+
+  // Normalize text to a string to avoid substring() errors on non-strings.
+  if (Array.isArray(text)) {
+    text = text.join('');
+  } else if (text && typeof text === 'object') {
+    if (typeof text.text === 'string') {
+      text = text.text;
+    } else if (typeof text.value === 'string') {
+      text = text.value;
+    } else {
+      text = JSON.stringify(text);
+    }
+  }
+  if (typeof text !== 'string') {
+    text = String(text || '');
+  }
+
+  if (!text) {
+    console.error('[callOpenAI] No text found in response. Full response:', JSON.stringify(data, null, 2).substring(0, 2000));
+    throw new Error('No text in API response');
+  }
+
+  console.log('[callOpenAI] Response text length:', text.length);
+  console.log('[callOpenAI] Response text (first 200 chars):', text.substring(0, 200));
+  console.log('[callOpenAI] Response text (last 100 chars):', text.substring(text.length - 100));
+
+  return text;
+}
+
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
+
+app.listen(PORT, () => {
+  console.log(`JobBot backend running on http://localhost:${PORT}`);
+});

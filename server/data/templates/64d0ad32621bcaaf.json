@@ -1,0 +1,132 @@
+﻿{
+  "id": "64d0ad32621bcaaf",
+  "name": "1",
+  "apiKey": "",
+  "data": {
+    "personalInfo": {
+      "name": "Demetric Bonner",
+      "title": "Senior Software Engineer",
+      "location": "Houston, TX 77078",
+      "phone": "(713) 239-3224",
+      "email": "demetric.bonner324@gmail.com",
+      "linkedin": "LinkedIn",
+      "github": "",
+      "portfolio": ""
+    },
+    "summary": "Senior Software Engineer with over 15 years of experience architecting, developing, and maintaining high-performance web and mobile applications. Proven expertise in leading complex projects, driving innovation, and delivering scalable solutions across diverse industries with a strong focus on optimizing system architecture and long-term sustainability.",
+    "experience": [
+      {
+        "company": "IntlDevs",
+        "role": "Senior Full Stack Developer",
+        "location": "Payson, UT",
+        "startDate": "2022-06",
+        "endDate": "2025-01",
+        "highlights": [
+          "Led design, development, and deployment of custom software solutions using React, Tailwind CSS, and TypeScript",
+          "Collaborated with clients to gather requirements and define project scope",
+          "Built responsive web and cross-platform mobile applications using React and React Native",
+          "Managed project timelines and deliverables while maintaining strong client relationships",
+          "Mentored junior developers and conducted code reviews to promote best practices"
+        ],
+        "technologies": [
+          "React",
+          "React Native",
+          "TypeScript",
+          "Tailwind CSS"
+        ]
+      },
+      {
+        "company": "Pluralsight",
+        "role": "Senior Software Engineer (Web and Mobile)",
+        "location": "Salt Lake City, UT",
+        "startDate": "2019-01",
+        "endDate": "2022-05",
+        "highlights": [
+          "Developed web applications with React, increasing user engagement by 20%",
+          "Built cross-platform mobile apps using React Native for iOS and Android",
+          "Improved application performance by 35% through state management and code-splitting",
+          "Collaborated with UX/UI designers and backend teams in an Agile environment",
+          "Led code reviews and mentored junior engineers"
+        ],
+        "technologies": [
+          "React",
+          "React Native",
+          "JavaScript",
+          "TypeScript"
+        ]
+      },
+      {
+        "company": "TensorIoT",
+        "role": "Full Stack Developer",
+        "location": "Orange, CA",
+        "startDate": "2016-06",
+        "endDate": "2018-12",
+        "highlights": [
+          "Developed scalable IoT solutions using Java, Spring Boot, and AWS",
+          "Built and optimized RESTful APIs with Java and Node.js",
+          "Designed interactive dashboards using React and JavaScript",
+          "Deployed applications using Docker and Kubernetes achieving 99.9% uptime",
+          "Collaborated with cross-functional teams to reduce deployment errors by 20%"
+        ],
+        "technologies": [
+          "Java",
+          "Spring Boot",
+          "Node.js",
+          "React",
+          "AWS",
+          "Docker",
+          "Kubernetes"
+        ]
+      }
+    ],
+    "education": [
+      {
+        "institution": "University of Houston",
+        "degree": "Bachelor of Science in Computer Science",
+        "startDate": "2006-01",
+        "endDate": "2010-05",
+        "notes": "Major: Computer Science"
+      }
+    ],
+    "skills": {
+      "frontend": [
+        "React",
+        "Redux",
+        "Next.js",
+        "React Native",
+        "Angular",
+        "Vue",
+        "Tailwind CSS",
+        "Material UI",
+        "Storybook"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "NestJS",
+        "Java",
+        "Spring Boot",
+        "Python",
+        "GraphQL",
+        "REST API",
+        "ORM"
+      ],
+      "aiSystems": [],
+      "cloudDevOps": [
+        "Docker",
+        "AWS",
+        "Google Cloud Platform",
+        "Heroku",
+        "Nginx",
+        "Microservices"
+      ],
+      "testing": [
+        "Cypress",
+        "Jest"
+      ],
+      "securityCompliance": []
+    }
+  },
+  "createdAt": "2026-02-09T11:55:06.484Z",
+  "updatedAt": "2026-02-09T11:55:06.484Z"
+}

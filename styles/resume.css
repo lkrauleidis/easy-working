@@ -1,0 +1,207 @@
+/* Resume PDF Styling - ATS-Friendly Format */
+
+/* Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Document */
+.resume {
+  font-family: 'Calibri', 'Arial', sans-serif;
+  font-size: 10pt;
+  line-height: 1.4;
+  color: #000;
+  max-width: 8.5in;
+  padding: 0.5in;
+  background: white;
+}
+
+/* Contact Section */
+.resume-header {
+  text-align: center;
+  margin-bottom: 12pt;
+}
+
+.resume-name {
+  font-size: 22pt;
+  font-weight: bold;
+  margin-bottom: 4pt;
+}
+
+.resume-contact-line {
+  font-size: 10pt;
+  margin-bottom: 2pt;
+}
+
+.resume-links {
+  font-size: 9pt;
+  color: #0000AA;
+}
+
+/* Section Headers */
+.section-header {
+  font-size: 12pt;
+  font-weight: bold;
+  text-transform: uppercase;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 2pt;
+  margin-top: 12pt;
+  margin-bottom: 6pt;
+  break-after: avoid;
+  page-break-after: avoid;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+/* Professional Summary */
+.summary-section {
+  margin-bottom: 6pt;
+}
+
+.summary-text {
+  font-size: 10pt;
+  line-height: 1.4;
+}
+
+/* Experience Section */
+.experience-section {
+  margin-bottom: 6pt;
+}
+
+.experience-item {
+  margin-bottom: 8pt;
+}
+
+.experience-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.experience-title {
+  font-size: 10pt;
+  font-weight: bold;
+}
+
+.experience-dates {
+  font-size: 9pt;
+  color: #333;
+}
+
+.experience-company {
+  font-size: 10pt;
+  margin-bottom: 3pt;
+}
+
+.experience-bullets {
+  list-style: none;
+  padding-left: 0;
+}
+
+.experience-bullet {
+  font-size: 9pt;
+  line-height: 1.4;
+  margin-bottom: 2pt;
+  padding-left: 12pt;
+  text-indent: -12pt;
+}
+
+.experience-bullet::before {
+  content: '\2022';
+  padding-right: 6pt;
+}
+
+/* Education Section */
+.education-section {
+  margin-bottom: 6pt;
+}
+
+.education-item {
+  margin-bottom: 4pt;
+}
+
+.education-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.education-degree {
+  font-size: 10pt;
+  font-weight: bold;
+}
+
+.education-dates {
+  font-size: 9pt;
+  color: #333;
+}
+
+.education-school {
+  font-size: 10pt;
+}
+
+/* Skills Section */
+.skills-section {
+  margin-bottom: 6pt;
+}
+
+.skills-list {
+  font-size: 9pt;
+  line-height: 1.5;
+}
+
+.skills-category {
+  margin-bottom: 2pt;
+}
+
+.skills-label {
+  font-weight: bold;
+}
+
+/* Certifications Section */
+.certifications-section {
+  margin-bottom: 6pt;
+}
+
+.certifications-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.certification-item {
+  font-size: 9pt;
+  padding-left: 12pt;
+  text-indent: -12pt;
+  margin-bottom: 2pt;
+}
+
+.certification-item::before {
+  content: '\2022';
+  padding-right: 6pt;
+}
+
+/* Print Styles */
+@media print {
+  .resume {
+    padding: 0;
+    max-width: none;
+  }
+
+  @page {
+    size: letter;
+    margin: 0.5in;
+  }
+}
+
+/* ATS Optimization Notes:
+ * - Using standard fonts (Calibri, Arial)
+ * - Single-column layout
+ * - No tables or complex formatting
+ * - Clear section headers
+ * - Standard bullet characters
+ * - No graphics or images
+ * - Proper heading hierarchy
+ * - Sufficient contrast for readability
+ */
