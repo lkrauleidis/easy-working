@@ -152,7 +152,10 @@ app.post('/api/templates/upload', upload.single('file'), async (req, res) => {
       username: record.username || record.filename || record.id
     });
   } catch (error) {
-    res.status(400).json({ error: 'Invalid JSON file' });
+    const message = error && error.message ? error.message : 'Upload failed';
+    const isJsonError = error instanceof SyntaxError;
+    const status = isJsonError ? 400 : 500;
+    res.status(status).json({ error: isJsonError ? 'Invalid JSON file' : message });
   }
 });
 

@@ -248,7 +248,16 @@
         formData.append('openaiKey', apiKeyInput.value.trim());
         const res = await fetch('/api/templates/upload', { method: 'POST', body: formData });
         if (!res.ok) {
-          alert('Upload failed');
+          let message = 'Upload failed';
+          try {
+            const err = await res.json();
+            if (err && err.error) {
+              message = err.error;
+            }
+          } catch {
+            // ignore JSON parse errors
+          }
+          alert(message);
           return;
         }
         filenameInput.value = '';
