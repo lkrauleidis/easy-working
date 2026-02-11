@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JobBot - Resume Tailor</title>
   <link rel="stylesheet" href="popup.css">
-  <!-- Local libraries for resume generation only -->
   <script src="../lib/jspdf.umd.min.js"></script>
   <script src="../lib/docx.umd.js"></script>
 </head>
@@ -14,77 +13,153 @@
     <header class="header">
       <h1>JobBot</h1>
       <p class="tagline">AI-Powered Resume Tailoring</p>
+      <div id="user-info" class="hidden">
+        <div class="user-row">
+          <span id="user-email"></span>
+          <span id="user-status" class="status-badge hidden"></span>
+        </div>
+        <button id="logout-btn" class="btn-text">Logout</button>
+      </div>
     </header>
 
-    <nav class="tabs">
-      <button class="tab active" data-tab="profile">Profile</button>
-      <button class="tab" data-tab="generate">Generate</button>
-    </nav>
-
-    <!-- Profile Tab -->
-    <section id="profile-tab" class="tab-content active">
-      <div id="profile-selector" class="profile-selector">
-        <label class="profile-label">Select Resume Template:</label>
-        <div class="profile-select-row">
-          <select id="template-select"></select>
-          <button class="btn-secondary" id="refresh-templates" title="Refresh template list">Refresh</button>
+    <!-- Auth Section -->
+    <div id="auth-section">
+      <!-- Login Form (Always visible initially) -->
+      <form id="login-form" class="auth-form active">
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="login-email" required>
         </div>
-        <p class="profile-hint">Templates are loaded from your backend.</p>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="login-password" required>
+        </div>
+        <button type="submit" class="btn-primary">Login</button>
+        
+        <div class="auth-links">
+          <a href="#" id="forgot-password-link">Forgot Password?</a>
+        </div>
+        
+        <div class="auth-footer" style="margin-top: 1rem; text-align: center; font-size: 0.9rem;">
+          New user? <a href="http://localhost:3000/#type=signup" id="signup-link" target="_blank">Register now</a>
+        </div>
+
+        <!-- Google Auth Placeholder -->
+        <button type="button" class="btn-google" id="google-auth-btn" disabled style="margin-top: 1rem;">Sign in with Google (Coming Soon)</button>
+      </form>
+
+      <!-- Forgot Password Form -->
+      <div id="forgot-password-form" class="auth-form hidden" style="text-align: center; padding: 2rem 0;">
+        <p>Password recovery is handled on our secure web dashboard.</p>
+        <button id="recovery-btn" class="btn-primary" style="margin-top: 1rem;">Go to Recovery Page</button>
+        <button type="button" class="btn-secondary" id="back-to-login" style="margin-top: 0.5rem;">Back to Login</button>
       </div>
 
-    </section>
+      <div id="auth-message" class="message hidden"></div>
+    </div>
 
-    <!-- Generate Tab -->
-    <section id="generate-tab" class="tab-content">
-      <div class="jd-section">
-        <div class="section-header">
-          <h3>Job Description</h3>
-          <button class="btn-secondary" id="extract-jd">Extract from Page</button>
-        </div>
+    <!-- Main App Content (Hidden until logged in) -->
+    <div id="app-content" class="hidden">
+      <nav class="tabs">
+        <button class="tab active" data-tab="profile">Templates</button>
+        <button class="tab" data-tab="generate">Generate</button>
+        <button class="tab" data-tab="history">History</button>
+      </nav>
 
-        <div class="jd-info">
-          <div class="jd-field">
-            <label>Position:</label>
-            <input type="text" id="position-title" placeholder="e.g., Senior Software Engineer">
+      <!-- Templates Tab -->
+      <section id="profile-tab" class="tab-content active">
+        <div class="profile-section">
+          <h3>Your Templates</h3>
+          <p class="limit-info">Limit: <span id="template-count">0</span>/3</p>
+          
+          <ul id="template-list" class="template-list">
+            <!-- Templates injected here -->
+          </ul>
+
+          <div class="upload-section">
+            <h4>Upload New Template</h4>
+            <form id="upload-form">
+              <div class="form-group">
+                <label>Resume JSON File</label>
+                <input type="file" id="resume-file" accept=".json" required>
+              </div>
+              <div class="form-group">
+                <label>Template Name (Optional)</label>
+                <input type="text" id="template-name">
+              </div>
+              <div class="form-group">
+                <label>OpenAI API Key (Optional)</label>
+                <input type="password" id="openai-key" placeholder="sk-...">
+                <small>Required if not set in profile</small>
+              </div>
+              <button type="submit" class="btn-secondary">Upload Template</button>
+            </form>
           </div>
-          <div class="jd-field">
-            <label>Company:</label>
-            <input type="text" id="company-name" placeholder="e.g., Google">
+
+          <div class="profile-settings" style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+            <h4>Global Settings</h4>
+            <div class="form-group">
+                <label>Default OpenAI API Key</label>
+                <input type="password" id="profile-openai-key" placeholder="sk-...">
+                <button id="save-profile-key" class="btn-secondary" style="margin-top: 5px;">Save Key</button>
+            </div>
           </div>
         </div>
+      </section>
 
-        <textarea id="jd-text" placeholder="Paste job description here or click 'Extract from Page'..."></textarea>
-      </div>
-
-      <div class="generate-section">
-        <button class="btn-primary" id="generate-btn" disabled>
-          <span class="btn-text">Generate Tailored Resume</span>
-          <span class="btn-loading hidden">Generating...</span>
-        </button>
-
-        <div id="generate-status" class="generate-status hidden">
-          <div class="progress-bar">
-            <div class="progress-fill"></div>
+      <!-- Generate Tab -->
+      <section id="generate-tab" class="tab-content">
+        <div class="jd-section">
+          <div class="section-header">
+            <div class="select-row">
+              <label>Template:</label>
+              <select id="generate-template-select"></select>
+            </div>
+            <button class="btn-secondary" id="extract-jd">Extract JD</button>
           </div>
-          <p class="progress-text"></p>
-        </div>
-      </div>
 
-      <div id="download-section" class="download-section hidden">
-        <h3>Download Resume</h3>
-        <div id="match-score" class="match-score hidden">
-          Match Score: <span id="match-score-value"></span>
+          <div class="jd-info">
+            <div class="jd-field">
+              <label>Position</label>
+              <input type="text" id="position-title">
+            </div>
+            <div class="jd-field">
+              <label>Company</label>
+              <input type="text" id="company-name">
+            </div>
+          </div>
+
+          <textarea id="jd-text" placeholder="Paste job description here..."></textarea>
         </div>
-        <p class="download-filename"></p>
-        <div class="download-buttons">
-          <button class="btn-download" id="download-pdf">PDF</button>
-          <button class="btn-download" id="download-docx">DOCX</button>
+
+        <div class="generate-section">
+          <button class="btn-primary" id="generate-btn" disabled>
+            Generate Tailored Resume
+          </button>
+          <div id="generate-status" class="hidden">Generating...</div>
+          <div id="duplicate-warning" class="warning hidden"></div>
         </div>
-      </div>
-    </section>
+
+        <div id="download-section" class="hidden">
+          <div class="match-score">Score: <span id="match-score-value"></span></div>
+          <div class="download-buttons">
+            <button class="btn-download" id="download-pdf">PDF</button>
+            <button class="btn-download" id="download-docx">DOCX</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- History Tab -->
+      <section id="history-tab" class="tab-content">
+        <h3>Generation History</h3>
+        <ul id="history-list" class="history-list">
+          <!-- History items -->
+        </ul>
+      </section>
+    </div>
 
     <footer class="footer">
-      <p class="version">v1.0.0</p>
+      <p class="version">v2.0.0</p>
     </footer>
   </div>
 

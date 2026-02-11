@@ -1,240 +1,649 @@
-﻿
-// Popup UI Logic with template selection and resume generation
+import { CONFIG } from './config.js';
 
 class PopupController {
   constructor() {
-    this.currentTab = 'profile';
+    this.token = null;
+    this.user = null;
+    this.profile = null;
     this.templates = [];
-    this.selectedTemplateId = null;
-    this.backendUrl = 'https://easy-working.onrender.com/';
-    this.resumeData = null;
-    this.jdData = null;
-    this.generatedResume = null;
-    this.matchScore = null;
+    this.history = [];
+    
+    // UI Elements
+    this.authSection = document.getElementById('auth-section');
+    this.appContent = document.getElementById('app-content');
+    this.userInfo = document.getElementById('user-info');
+    this.userEmailSpan = document.getElementById('user-email');
+    this.logoutBtn = document.getElementById('logout-btn');
+    
+    this.authTabs = document.querySelectorAll('.auth-tab');
+    this.authForms = document.querySelectorAll('.auth-form');
+    this.authMessage = document.getElementById('auth-message');
+    
+    this.tabs = document.querySelectorAll('.tab');
+    this.tabContents = document.querySelectorAll('.tab-content');
+    
+    this.templateList = document.getElementById('template-list');
+    this.templateCount = document.getElementById('template-count');
+    this.templateSelect = document.getElementById('generate-template-select');
+    
+    this.historyList = document.getElementById('history-list');
+    
+    // Bind methods
+    this.init = this.init.bind(this);
+    this.handleAuth = this.handleAuth.bind(this);
+    this.handleUpload = this.handleUpload.bind(this);
+    this.handleGenerate = this.handleGenerate.bind(this);
+    this.extractJD = this.extractJD.bind(this);
+    
     this.init();
   }
 
   async init() {
-    this.bindElements();
-    this.bindEvents();
-    await this.loadStoredData();
-    await this.loadTemplates();
-    this.updateGenerateButton();
-  }
-
-  bindElements() {
-    // Tabs
-    this.tabs = document.querySelectorAll('.tab');
-    this.tabContents = document.querySelectorAll('.tab-content');
-
-    // Template elements
-    this.profileSelector = document.getElementById('profile-selector');
-    this.templateSelect = document.getElementById('template-select');
-    this.refreshTemplatesBtn = document.getElementById('refresh-templates');
-
-    // Generate elements
-    this.extractJdBtn = document.getElementById('extract-jd');
-    this.positionInput = document.getElementById('position-title');
-    this.companyInput = document.getElementById('company-name');
-    this.jdText = document.getElementById('jd-text');
-    this.generateBtn = document.getElementById('generate-btn');
-    this.generateStatus = document.getElementById('generate-status');
-    this.downloadSection = document.getElementById('download-section');
-    this.downloadPdfBtn = document.getElementById('download-pdf');
-    this.downloadDocxBtn = document.getElementById('download-docx');
-    this.matchScoreEl = document.getElementById('match-score');
-    this.matchScoreValue = document.getElementById('match-score-value');
-  }
-
-  bindEvents() {
-    // Tab switching
-    this.tabs.forEach(tab => {
-      tab.addEventListener('click', () => this.switchTab(tab.dataset.tab));
-    });
-
-    // Template events
-    this.templateSelect.addEventListener('change', () => this.handleTemplateSelect());
-    this.refreshTemplatesBtn.addEventListener('click', () => this.loadTemplates());
-
-    // Generate events
-    this.extractJdBtn.addEventListener('click', () => this.extractJobDescription());
-    this.jdText.addEventListener('input', () => this.updateGenerateButton());
-    this.positionInput.addEventListener('input', () => this.updateGenerateButton());
-    this.companyInput.addEventListener('input', () => this.updateGenerateButton());
-    this.generateBtn.addEventListener('click', () => this.generateResume());
-    this.downloadPdfBtn.addEventListener('click', () => this.downloadResume('pdf'));
-    this.downloadDocxBtn.addEventListener('click', () => this.downloadResume('docx'));
-  }
-
-  async loadStoredData() {
-    try {
-      const result = await chrome.storage.local.get(['selectedTemplateId']);
-      if (result.selectedTemplateId) {
-        this.selectedTemplateId = result.selectedTemplateId;
-      }
-    } catch (error) {
-      console.error('Error loading stored data:', error);
+    this.setupEventListeners();
+    
+    // Check for stored token
+    const stored = await chrome.storage.local.get(['authToken']);
+    if (stored.authToken) {
+      this.token = stored.authToken;
+      await this.validateSession();
+    } else {
+      this.showAuth();
     }
   }
 
-/**
- * Switches the active tab to the specified tab name
- * @param {string} tabName - Name of the tab to switch to
- * @example
- * switchTab('profile');
- */
-  switchTab(tabName) {
-    this.currentTab = tabName;
+  setupEventListeners() {
+    // Login Form
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('login-email').value;
+      const password = document.getElementById('login-password').value;
+      await this.login(email, password);
+    });
+
+    // Signup Link (Redirect to Web)
+    const signupLink = document.getElementById('signup-link');
+    if (signupLink) {
+        signupLink.href = `${CONFIG.DASHBOARD_URL}/#type=signup`;
+        signupLink.addEventListener('click', (e) => {
+            // Let the default behavior happen if it has target="_blank", 
+            // BUT Chrome extensions often block direct navigation in popups.
+            // So we explicitly use tabs.create to be 100% sure it opens a new tab.
+            e.preventDefault();
+            chrome.tabs.create({ url: `${CONFIG.DASHBOARD_URL}/#type=signup` });
+        });
+    }
+
+    // Forgot Password Link (Switch to Tab)
+    document.getElementById('forgot-password-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      this.authForms.forEach(f => f.classList.add('hidden'));
+      document.getElementById('forgot-password-form').classList.remove('hidden');
+    });
+
+    // Recovery Button (Redirect to Web)
+    const recoveryBtn = document.getElementById('recovery-btn');
+    if (recoveryBtn) {
+        recoveryBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            chrome.tabs.create({ url: `${CONFIG.DASHBOARD_URL}/#type=recovery` });
+        });
+    }
+    
+    // Back to Login (from Recovery)
+    document.getElementById('back-to-login').addEventListener('click', () => {
+      document.getElementById('forgot-password-form').classList.add('hidden');
+      document.getElementById('login-form').classList.remove('hidden');
+      document.getElementById('login-form').classList.add('active');
+    });
+
+    // Logout
+    this.logoutBtn.addEventListener('click', () => this.logout());
+
+    // Main Tabs
     this.tabs.forEach(tab => {
-      tab.classList.toggle('active', tab.dataset.tab === tabName);
-    });
-    this.tabContents.forEach(content => {
-      content.classList.toggle('active', content.id === `${tabName}-tab`);
-    });
-  }
-
-  // ========== Template Management ==========
-
-  async loadTemplates() {
-    try {
-      this.refreshTemplatesBtn.disabled = true;
-      const templates = await this.fetchTemplates();
-      this.templates = templates;
-      this.populateTemplateDropdown();
-
-      if (this.selectedTemplateId) {
-        const exists = this.templates.some(t => t.id === this.selectedTemplateId);
-        if (exists) {
-          this.templateSelect.value = this.selectedTemplateId;
-          await this.selectTemplate(this.selectedTemplateId);
-          return;
+      tab.addEventListener('click', () => {
+        this.tabs.forEach(t => t.classList.remove('active'));
+        this.tabContents.forEach(c => c.classList.remove('active'));
+        
+        tab.classList.add('active');
+        const targetId = `${tab.dataset.tab}-tab`;
+        document.getElementById(targetId).classList.add('active');
+        
+        if (tab.dataset.tab === 'history') {
+          this.fetchHistory();
         }
+      });
+    });
+
+    // Template Upload
+    document.getElementById('upload-form').addEventListener('submit', this.handleUpload);
+
+    // Profile Settings (Restored)
+    const saveKeyBtn = document.getElementById('save-profile-key');
+    if (saveKeyBtn) {
+        saveKeyBtn.addEventListener('click', async () => {
+            const key = document.getElementById('profile-openai-key').value;
+            await this.updateProfile({ openai_key: key });
+        });
+    }
+
+    // Generate Section
+    document.getElementById('extract-jd').addEventListener('click', this.extractJD);
+    document.getElementById('generate-btn').addEventListener('click', this.handleGenerate);
+    
+    // Download Buttons
+    document.getElementById('download-pdf').addEventListener('click', () => this.downloadResume('pdf'));
+    document.getElementById('download-docx').addEventListener('click', () => this.downloadResume('docx'));
+  }
+
+  async login(email, password) {
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Login failed');
       }
 
-      if (this.templates.length > 0) {
-        this.templateSelect.value = this.templates[0].id;
-        await this.selectTemplate(this.templates[0].id);
+      this.token = data.session.access_token;
+      this.user = data.user;
+      
+      // Save token
+      await chrome.storage.local.set({ 
+        authToken: this.token,
+        refreshToken: data.session.refresh_token 
+      });
+
+      await this.validateSession();
+      
+    } catch (err) {
+      if (err.message && err.message.includes('not yet approved')) {
+        this.showAuthMessage('Your account is pending admin approval. Please wait for confirmation.', 'error');
       } else {
-        this.resumeData = null;
-        this.updateGenerateButton();
+        this.showAuthMessage(err.message, 'error');
       }
-    } catch (error) {
-      console.error('Error loading templates:', error);
-      this.resumeData = null;
-      this.updateGenerateButton();
-      alert('Failed to load templates. Check that the backend is running.');
-    } finally {
-      this.refreshTemplatesBtn.disabled = false;
     }
   }
+
+  async signup(email, password) {
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      
+      this.showAuthMessage(data.message || 'Signup successful! Redirecting...', 'success');
+      document.getElementById('signup-form').reset();
+      
+      if (data.session) {
+          this.token = data.session.access_token;
+          await chrome.storage.local.set({ authToken: this.token });
+          const dashboardUrl = `${CONFIG.DASHBOARD_URL}/#access_token=${this.token}&refresh_token=${data.session.refresh_token}&type=recovery`;
+          chrome.tabs.create({ url: dashboardUrl });
+      } else {
+          // No session (email confirmation needed)
+          const dashboardUrl = `${CONFIG.DASHBOARD_URL}/#type=signup`;
+          chrome.tabs.create({ url: dashboardUrl });
+      }
+      
+    } catch (err) {
+      console.error(err);
+      this.showAuthMessage(err.message, 'error');
+    }
+  }
+
+  async forgotPassword(email) {
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      
+      this.showAuthMessage('Reset link sent. Redirecting to dashboard...', 'success');
+      
+      // Redirect to dashboard
+      chrome.tabs.create({ url: `${CONFIG.DASHBOARD_URL}/#type=recovery` });
+      
+    } catch (err) {
+      this.showAuthMessage(err.message, 'error');
+    }
+  }
+
+  async validateSession() {
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/auth/me`, {
+        headers: { 'Authorization': `Bearer ${this.token}` }
+      });
+      
+      if (!res.ok) throw new Error('Session invalid');
+      
+      const data = await res.json();
+      this.user = data.user;
+      
+      // Ensure profile exists, if null, we treat as pending/unapproved
+      this.profile = data.profile || { is_approved: false }; 
+      
+      this.showApp();
+    } catch (err) {
+      console.error(err);
+      this.logout();
+    }
+  }
+
+  logout() {
+    this.token = null;
+    this.user = null;
+    this.profile = null;
+    chrome.storage.local.remove('authToken');
+    this.showAuth();
+  }
+
+  showAuth() {
+    this.authSection.classList.remove('hidden');
+    this.appContent.classList.add('hidden');
+    this.userInfo.classList.add('hidden');
+  }
+
+  showApp() {
+    this.authSection.classList.add('hidden');
+    this.appContent.classList.remove('hidden');
+    this.userInfo.classList.remove('hidden');
+    this.userEmailSpan.textContent = this.user.email;
+    
+    this.updateStatusBadge();
+
+    if (this.profile && this.profile.openai_key) {
+        document.getElementById('profile-openai-key').value = this.profile.openai_key;
+    }
+    
+    if (this.profile && this.profile.is_approved) {
+      this.fetchTemplates();
+      // Enable features
+      document.querySelectorAll('.upload-section button, #extract-jd, #generate-btn').forEach(b => b.disabled = false);
+    } else {
+      // Disable features
+      document.querySelectorAll('.upload-section button, #extract-jd, #generate-btn').forEach(b => b.disabled = true);
+      this.templateList.innerHTML = '<div style="padding:10px;color:orange">Account pending approval. Features disabled.</div>';
+    }
+  }
+
+  updateStatusBadge() {
+    const badge = document.getElementById('user-status');
+    badge.classList.remove('hidden', 'status-approved', 'status-pending');
+    
+    console.log('[Popup] Updating badge. Profile:', this.profile);
+
+    if (this.profile && this.profile.is_approved) {
+      badge.textContent = 'Approved';
+      badge.classList.add('status-approved');
+      badge.classList.remove('hidden'); // Ensure visible
+    } else {
+      badge.textContent = 'Processing';
+      badge.classList.add('status-pending');
+      badge.classList.remove('hidden'); // Ensure visible
+    }
+  }
+
+  showAuthMessage(msg, type) {
+    this.authMessage.textContent = msg;
+    this.authMessage.className = `message ${type === 'error' ? 'error-message' : 'success-message'}`;
+    this.authMessage.style.display = 'block';
+  }
+
+  // --- Templates ---
 
   async fetchTemplates() {
-    const baseUrl = this.getBackendBaseUrl();
-    const response = await fetch(`${baseUrl}/api/templates`);
-    if (!response.ok) {
-      throw new Error(`Backend error (${response.status})`);
-    }
-    const data = await response.json();
-    if (Array.isArray(data)) {
-      return data;
-    }
-    return data.templates || [];
-  }
-
-  populateTemplateDropdown() {
-    this.templateSelect.innerHTML = '';
-
-    if (!this.templates.length) {
-      const option = document.createElement('option');
-      option.value = '';
-      option.textContent = 'No templates found';
-      this.templateSelect.appendChild(option);
-      this.templateSelect.disabled = true;
-      return;
-    }
-
-    this.templateSelect.disabled = false;
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Select a template';
-    this.templateSelect.appendChild(placeholder);
-
-    for (const template of this.templates) {
-      const option = document.createElement('option');
-      option.value = template.id;
-      option.textContent = template.name || template.id;
-      this.templateSelect.appendChild(option);
-    }
-  }
-
-  async handleTemplateSelect() {
-    const selectedId = this.templateSelect.value;
-    if (!selectedId) {
-      this.resumeData = null;
-      this.updateGenerateButton();
-      return;
-    }
-    await this.selectTemplate(selectedId);
-  }
-
-  async selectTemplate(id) {
     try {
-      const template = await this.fetchTemplateData(id);
-      const normalized = this.normalizeProfileData(template.data || template);
-      this.selectedTemplateId = id;
-      this.resumeData = normalized;
-      await chrome.storage.local.set({ selectedTemplateId: id });
-      this.downloadSection.classList.add('hidden');
-      this.matchScore = null;
-      this.matchScoreEl.classList.add('hidden');
-      this.updateGenerateButton();
-    } catch (error) {
-      console.error('Error selecting template:', error);
-      alert('Failed to load template.');
+      console.log('[Popup] Fetching templates...');
+      this.templateList.innerHTML = '<div class="loading">Loading templates...</div>';
+      
+      const res = await fetch(`${CONFIG.API_URL}/templates`, {
+        headers: { 'Authorization': `Bearer ${this.token}` }
+      });
+      
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        throw new Error(`Server error (${res.status}): Invalid JSON response`);
+      }
+
+      console.log('[Popup] Templates response:', data);
+      
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      
+      this.templates = Array.isArray(data.templates) ? data.templates : [];
+      this.renderTemplates();
+      this.updateTemplateSelect();
+    } catch (err) {
+      console.error('Failed to fetch templates:', err);
+      this.templateList.innerHTML = `<div class="error-message">Failed to load templates: ${err.message}</div>`;
+      this.templateCount.textContent = '0';
     }
   }
 
-  async fetchTemplateData(id) {
-    const baseUrl = this.getBackendBaseUrl();
-    const response = await fetch(`${baseUrl}/api/templates/${id}`);
-    if (!response.ok) {
-      throw new Error(`Template not found (${response.status})`);
+  renderTemplates() {
+    this.templateList.innerHTML = '';
+    this.templateCount.textContent = this.templates.length;
+    
+    if (this.templates.length === 0) {
+      this.templateList.innerHTML = '<div class="empty-state">No templates found. Upload one to get started.</div>';
+      return;
     }
-    return await response.json();
+    
+    this.templates.forEach(t => {
+      const div = document.createElement('div');
+      div.className = 'template-item';
+      div.innerHTML = `
+        <div class="template-info">
+          <div class="template-name">${t.username || t.filename}</div>
+          <div class="template-date">${new Date(t.created_at).toLocaleDateString()}</div>
+        </div>
+        <div class="template-actions">
+          <button class="btn-icon delete" data-id="${t.id}" title="Delete">🗑️</button>
+        </div>
+      `;
+      
+      div.querySelector('.delete').addEventListener('click', () => this.deleteTemplate(t.id));
+      this.templateList.appendChild(div);
+    });
+
+    const uploadBtn = document.querySelector('#upload-form button');
+    if (this.templates.length >= 3) {
+      uploadBtn.disabled = true;
+      uploadBtn.textContent = 'Limit Reached (Max 3)';
+    } else {
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Upload Template';
+    }
   }
 
-  getBackendBaseUrl() {
-    const url = (this.backendUrl || 'https://easy-working.onrender.com').trim();
-    return url.replace(/\/+$/, '');
+  updateTemplateSelect() {
+    this.templateSelect.innerHTML = '';
+    this.templates.forEach(t => {
+      const option = document.createElement('option');
+      option.value = t.id;
+      option.textContent = t.username || t.filename;
+      this.templateSelect.appendChild(option);
+    });
   }
 
-  /**
-   * Normalize any profile JSON format into a consistent internal structure.
-   * Handles: personalInfo wrapper, role/title, highlights/bullets,
-   * startDate+endDate/dates, institution/school, skill category name variants.
-   */
+  async handleUpload(e) {
+    e.preventDefault();
+    if (this.templates.length >= 3) {
+      alert('You can only upload up to 3 templates.');
+      return;
+    }
+
+    const fileInput = document.getElementById('resume-file');
+    const nameInput = document.getElementById('template-name');
+    const keyInput = document.getElementById('openai-key');
+    
+    if (!fileInput.files[0]) return;
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('username', nameInput.value);
+    formData.append('openaiKey', keyInput.value);
+
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/templates/upload`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${this.token}` },
+        body: formData
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      
+      // Reset form
+      e.target.reset();
+      this.fetchTemplates();
+      alert('Template uploaded successfully!');
+    } catch (err) {
+      alert('Upload failed: ' + err.message);
+    }
+  }
+
+  async deleteTemplate(id) {
+    if (!confirm('Are you sure you want to delete this template?')) return;
+    
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/templates/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${this.token}` }
+      });
+      
+      if (!res.ok) throw new Error('Failed to delete');
+      
+      this.fetchTemplates();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async updateProfile(updates) {
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/profile`, {
+        method: 'PUT',
+        headers: { 
+          'Authorization': `Bearer ${this.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updates)
+      });
+      
+      if (!res.ok) throw new Error('Update failed');
+      
+      const data = await res.json();
+      this.profile = data.profile;
+      alert('Profile updated!');
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  // --- Generate ---
+
+  async extractJD() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) return;
+
+    try {
+      // Execute content script if not already injected (simplified assumption: already injected or declared in manifest)
+      const response = await chrome.tabs.sendMessage(tab.id, { action: 'extractJD' });
+      
+      if (response && response.success) {
+        document.getElementById('position-title').value = response.position || '';
+        document.getElementById('company-name').value = response.company || '';
+        document.getElementById('jd-text').value = response.jobDescription || '';
+        
+        // Check for duplicates
+        if (response.company) {
+          this.checkDuplicate(response.company);
+        }
+      } else {
+        alert('Could not extract job description. Please paste manually.');
+      }
+    } catch (err) {
+      console.error(err);
+      // Fallback: try executing script
+      alert('Error communicating with page. Try reloading the page.');
+    }
+  }
+
+  async checkDuplicate(company) {
+    const warningBox = document.getElementById('duplicate-warning');
+    warningBox.classList.add('hidden');
+    
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/history?company=${encodeURIComponent(company)}`, {
+        headers: { 'Authorization': `Bearer ${this.token}` }
+      });
+      const data = await res.json();
+      
+      if (data.history && data.history.length > 0) {
+        const lastUsed = data.history[0];
+        let suggestionHtml = '';
+        
+        if (lastUsed.template_id) {
+            const tmpl = this.templates.find(t => t.id === lastUsed.template_id);
+            if (tmpl) {
+                suggestionHtml = `<div class="mt-2">💡 <strong>Suggestion:</strong> You previously used template "<strong>${tmpl.username || tmpl.filename}</strong>".</div>`;
+            }
+        }
+
+        warningBox.innerHTML = `
+          <div style="display: flex; gap: 8px; align-items: flex-start;">
+            <span class="warning-icon">⚠️</span>
+            <div>
+              <strong>Warning:</strong> You have already generated a resume for 
+              "${company}" on ${new Date(lastUsed.created_at).toLocaleDateString()}.
+              ${suggestionHtml}
+            </div>
+          </div>
+        `;
+        warningBox.classList.remove('hidden');
+      }
+    } catch (err) {
+      console.error('Check duplicate failed', err);
+    }
+  }
+
+  async handleGenerate() {
+    const templateId = this.templateSelect.value;
+    const position = document.getElementById('position-title').value;
+    const company = document.getElementById('company-name').value;
+    const jdText = document.getElementById('jd-text').value;
+    
+    if (!templateId) {
+      alert('Please select a template');
+      return;
+    }
+    if (!jdText) {
+      alert('Please provide a job description');
+      return;
+    }
+
+    const btn = document.getElementById('generate-btn');
+    const status = document.getElementById('generate-status');
+    const downloadSec = document.getElementById('download-section');
+    
+    btn.disabled = true;
+    status.classList.remove('hidden');
+    downloadSec.classList.add('hidden');
+    
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/generate`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${this.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          templateId,
+          jobDescription: jdText,
+          position,
+          company
+        })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      
+      this.currentResume = data.resume; // Store for download
+      
+      // Update UI
+      document.getElementById('match-score-value').textContent = `${data.resume.matchScore}%`;
+      downloadSec.classList.remove('hidden');
+      
+      // Refresh history
+      this.fetchHistory();
+      
+    } catch (err) {
+      alert('Generation failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      status.classList.add('hidden');
+    }
+  }
+
+  // --- History ---
+
+  async fetchHistory() {
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/history`, {
+        headers: { 'Authorization': `Bearer ${this.token}` }
+      });
+      const data = await res.json();
+      this.history = data.history || [];
+      this.renderHistory();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  renderHistory() {
+    this.historyList.innerHTML = '';
+    this.history.forEach(h => {
+      const div = document.createElement('div');
+      div.className = 'history-item';
+      div.innerHTML = `
+        <div class="history-company">${h.company_name}</div>
+        <div class="history-role">${h.position_title}</div>
+        <div class="history-meta">
+          <span>${new Date(h.created_at).toLocaleDateString()}</span>
+          <span>Score: ${h.match_score || '?'}%</span>
+        </div>
+      `;
+      // Could add download logic here if we stored the full result
+      this.historyList.appendChild(div);
+    });
+  }
+
+  // --- Helpers from V1 ---
+
   normalizeProfileData(raw) {
-    const info = raw.personalInfo || raw;
-
+    // Handle various structures:
+    // 1. v2 structure with personalInfo wrapper
+    // 2. v1 structure (flat)
+    // 3. Generated structure (contact wrapper)
+    const info = raw.personalInfo || raw.contact || raw;
+    
     const normalized = {
-      name: info.name || raw.name || '',
-      headline: info.title || raw.headline || raw.title || '',
-      email: info.email || raw.email || '',
-      phone: info.phone || raw.phone || '',
-      location: info.location || raw.location || raw.address || '',
-      linkedin: info.linkedin || raw.linkedin || '',
-      website: info.portfolio || info.github || raw.website || '',
-      github: info.github || raw.github || '',
-      summary: raw.summary || ''
+      contact: {
+        name: info.name || raw.name || '',
+        title: info.title || raw.headline || raw.title || '',
+        email: info.email || raw.email || '',
+        phone: info.phone || raw.phone || '',
+        location: info.location || raw.location || raw.address || '',
+        linkedin: info.linkedin || raw.linkedin || '',
+        website: info.portfolio || info.github || raw.website || '',
+        github: info.github || raw.github || ''
+      },
+      summary: raw.summary || info.summary || ''
     };
 
     // Experience
     normalized.experience = (raw.experience || []).map(exp => ({
-      title: exp.role || exp.title || '',
+      title: exp.role || exp.title || exp.position || '',
       company: exp.company || '',
-      dates: exp.dates || combineDates(exp.startDate, exp.endDate) || exp.duration || '',
+      dates: exp.dates || this.combineDates(exp.startDate, exp.endDate) || exp.duration || '',
       location: exp.location || '',
-      bullets: exp.highlights || exp.bullets || [],
+      bullets: exp.highlights || exp.bullets || (exp.description ? [exp.description] : []),
       technologies: exp.technologies || []
     }));
 
@@ -243,181 +652,30 @@ class PopupController {
       school: edu.institution || edu.school || edu.university || '',
       faculty: edu.faculty || edu.major || '',
       degree: edu.degree || '',
-      dates: edu.dates || combineDates(edu.startDate, edu.endDate) || edu.duration || '',
+      dates: edu.dates || this.combineDates(edu.startDate, edu.endDate) || edu.duration || '',
       gpa: edu.gpa || '',
       honors: edu.honors || edu.notes || ''
     }));
 
-    // Skills - flatten all categories into a single array for the AI prompt
+    // Skills - flatten all categories into a single array for the AI prompt or display if needed
+    // But keep structure if possible. For generation, we might prefer the object structure if available.
     if (raw.skills) {
       if (Array.isArray(raw.skills)) {
         normalized.skills = raw.skills;
       } else if (typeof raw.skills === 'object') {
-        normalized.skills = [];
-        for (const values of Object.values(raw.skills)) {
-          if (Array.isArray(values)) {
-            normalized.skills.push(...values);
-          }
-        }
+        // v2 structure often has categorized skills. Keep them as is, but also support flattening if needed.
+        normalized.skills = raw.skills;
       }
     } else {
       normalized.skills = [];
     }
 
-    // Certifications
-    normalized.certifications = raw.certifications || [];
-
     return normalized;
-
-    function combineDates(start, end) {
-      if (!start && !end) return '';
-      return `${start || ''}${start && end ? ' - ' : ''}${end || ''}`;
-    }
   }
 
-  // ========== Job Description Extraction ==========
-
-  async extractJobDescription() {
-    try {
-      this.extractJdBtn.textContent = 'Extracting...';
-      this.extractJdBtn.disabled = true;
-
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-      if (!tab || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('about:')) {
-        alert('Cannot extract from this page. Please navigate to a job posting and try again.');
-        return;
-      }
-
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: extractJDFromPage
-      });
-
-      if (results && results[0] && results[0].result) {
-        const response = results[0].result;
-        if (response.success) {
-          this.jdText.value = response.jobDescription;
-          this.positionInput.value = response.position || '';
-          this.companyInput.value = response.company || '';
-          this.updateGenerateButton();
-        } else {
-          alert('Could not extract job description. Please paste it manually.');
-        }
-      } else {
-        alert('Could not extract job description. Please paste it manually.');
-      }
-    } catch (error) {
-      console.error('Error extracting JD:', error);
-      alert('Error extracting job description. Please paste it manually.');
-    } finally {
-      this.extractJdBtn.textContent = 'Extract from Page';
-      this.extractJdBtn.disabled = false;
-    }
-  }
-  // ========== Resume Generation ==========
-
-  updateGenerateButton() {
-    const hasResume = this.resumeData !== null;
-    const hasJd = this.jdText.value.trim().length > 50;
-    this.generateBtn.disabled = !hasResume || !hasJd;
-
-    if (!hasResume) {
-      this.generateBtn.querySelector('.btn-text').textContent = 'Select Template First';
-    } else if (!hasJd) {
-      this.generateBtn.querySelector('.btn-text').textContent = 'Enter Job Description';
-    } else {
-      this.generateBtn.querySelector('.btn-text').textContent = 'Generate Tailored Resume';
-    }
-  }
-
-  async generateResume() {
-    try {
-      const selectedId = this.selectedTemplateId;
-      if (!selectedId) {
-        throw new Error('No template selected. Please select a template first.');
-      }
-      if (!this.templates?.some(t => t.id === selectedId)) {
-        await this.loadTemplates();
-        throw new Error('Selected template no longer exists on the backend. Please select a template again.');
-      }
-
-      this.generateBtn.querySelector('.btn-text').classList.add('hidden');
-      this.generateBtn.querySelector('.btn-loading').classList.remove('hidden');
-      this.generateBtn.disabled = true;
-      this.generateStatus.classList.remove('hidden');
-      this.downloadSection.classList.add('hidden');
-      this.matchScore = null;
-      this.matchScoreEl.classList.add('hidden');
-
-      this.updateProgress(10, 'Analyzing job description...');
-
-      const response = await this.callGenerateApi();
-
-      if (response && response.resume) {
-        this.updateProgress(100, 'Resume generated successfully!');
-        this.generatedResume = this.normalizeGeneratedResume(response.resume);
-        if (!this.generatedResume.targetTitle) {
-          this.generatedResume.targetTitle = this.positionInput.value || response.extractedPosition || '';
-        }
-        this.matchScore = response.resume?.matchScore ?? null;
-        this.jdData = {
-          position: this.positionInput.value || response.extractedPosition,
-          company: this.companyInput.value || response.extractedCompany
-        };
-
-        if (!this.positionInput.value && response.extractedPosition) {
-          this.positionInput.value = response.extractedPosition;
-        }
-        if (!this.companyInput.value && response.extractedCompany) {
-          this.companyInput.value = response.extractedCompany;
-        }
-
-        setTimeout(() => {
-          this.showDownloadSection();
-        }, 500);
-      } else {
-        throw new Error(response?.error || 'Failed to generate resume');
-      }
-    } catch (error) {
-      console.error('Error generating resume:', error);
-      this.updateProgress(0, 'Error: ' + error.message);
-      alert('Error generating resume: ' + error.message);
-    } finally {
-      this.generateBtn.querySelector('.btn-text').classList.remove('hidden');
-      this.generateBtn.querySelector('.btn-loading').classList.add('hidden');
-      this.generateBtn.disabled = false;
-    }
-  }
-
-  normalizeGeneratedResume(value) {
-    let parsed = value;
-    if (typeof parsed === 'string') {
-      parsed = this.tryParseEmbeddedJson(parsed) || parsed;
-    } else if (parsed && typeof parsed === 'object') {
-      if (typeof parsed.text === 'string') {
-        parsed = this.tryParseEmbeddedJson(parsed.text) || parsed;
-      } else if (typeof parsed.output_text === 'string') {
-        parsed = this.tryParseEmbeddedJson(parsed.output_text) || parsed;
-      } else if (Array.isArray(parsed.content)) {
-        const combined = parsed.content
-          .map(block => (block && typeof block.text === 'string' ? block.text : ''))
-          .join('');
-        parsed = this.tryParseEmbeddedJson(combined) || parsed;
-      }
-    }
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Resume payload is not valid JSON.');
-    }
-    if (parsed.skills && typeof parsed.skills === 'object' && !Array.isArray(parsed.skills)) {
-      if (parsed.skills.database && !parsed.skills.databases) {
-        parsed.skills.databases = parsed.skills.database;
-      }
-      if (parsed.skills.cloudDevOps && !parsed.skills.cloud_devops) {
-        parsed.skills.cloud_devops = parsed.skills.cloudDevOps;
-      }
-    }
-    return parsed;
+  combineDates(start, end) {
+    if (!start && !end) return '';
+    return `${start || ''}${start && end ? ' - ' : ''}${end || ''}`;
   }
 
   formatDateRange(value) {
@@ -433,9 +691,10 @@ class PopupController {
   }
 
   formatDatePart(value) {
-    const text = value.trim();
+    const text = (value || '').trim();
     if (!text) return '';
 
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const monthMap = {
       jan: 'Jan', january: 'Jan',
       feb: 'Feb', february: 'Feb',
@@ -451,29 +710,36 @@ class PopupController {
       dec: 'Dec', december: 'Dec'
     };
 
-    let m = text.match(/^(\d{4})[\/\-.](\d{1,2})$/);
+    // YYYY-MM-DD or YYYY-MM
+    let m = text.match(/^(\d{4})[-\/.](\d{1,2})(?:[-\/.]\d{1,2})?$/);
     if (m) {
       const year = m[1];
-      const monthNum = Math.max(1, Math.min(12, parseInt(m[2], 10)));
-      const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return `${monthNames[monthNum - 1]} ${year}`;
+      const monthNum = parseInt(m[2], 10);
+      if (monthNum >= 1 && monthNum <= 12) {
+        return `${monthNames[monthNum - 1]} ${year}`;
+      }
     }
 
-    m = text.match(/^(\d{4})[\/\-.]([A-Za-z]{3})$/);
+    // MM/YYYY
+    m = text.match(/^(\d{1,2})[-\/.](\d{4})$/);
     if (m) {
-      const year = m[1];
-      const mon = m[2].toLowerCase();
-      return `${monthMap[mon] || m[2]} ${year}`;
+       const monthNum = parseInt(m[1], 10);
+       const year = m[2];
+       if (monthNum >= 1 && monthNum <= 12) {
+        return `${monthNames[monthNum - 1]} ${year}`;
+      }
     }
 
-    m = text.match(/^([A-Za-z]+)\s+(\d{4})$/);
+    // Month YYYY (Jan 2023 or January 2023)
+    m = text.match(/^([A-Za-z]+)[,\s]+(\d{4})$/);
     if (m) {
       const mon = m[1].toLowerCase();
       const year = m[2];
       if (monthMap[mon]) return `${monthMap[mon]} ${year}`;
     }
 
-    m = text.match(/^(\d{4})\s+([A-Za-z]+)$/);
+    // YYYY Month
+    m = text.match(/^(\d{4})[,\s]+([A-Za-z]+)$/);
     if (m) {
       const year = m[1];
       const mon = m[2].toLowerCase();
@@ -481,7 +747,7 @@ class PopupController {
     }
 
     if (/^\d{4}$/.test(text)) return text;
-    if (/^[A-Za-z]{3}\s+\d{4}$/.test(text)) return text;
+    
     return text;
   }
 
@@ -496,11 +762,6 @@ class PopupController {
       runs.push({ text: part, bold });
     }
     return runs;
-  }
-
-  stripBoldMarkers(text) {
-    if (!text) return text;
-    return text.replace(/\*\*(.*?)\*\*/g, '$1');
   }
 
   buildDocxRuns(text, font, size) {
@@ -600,815 +861,637 @@ class PopupController {
     return { lines: textResult.lines, height: textResult.height };
   }
 
-  renderSegmentsPdf(doc, segments, x, y, maxWidth, fontSize, lineHeight) {
-    const runs = [];
-    for (const seg of segments) {
-      if (!seg || !seg.text) continue;
-      runs.push({ text: seg.text, bold: !!seg.bold });
-    }
-    if (!runs.length) return { lines: 0, height: 0 };
-
-    const tokens = [];
-    for (const run of runs) {
-      const parts = run.text.replace(/\r\n/g, '\n').split('\n');
-      for (let s = 0; s < parts.length; s++) {
-        const chunks = parts[s].split(/(\s+)/);
-        for (const chunk of chunks) {
-          if (chunk === '') continue;
-          tokens.push({ text: chunk, bold: run.bold });
-        }
-        if (s < parts.length - 1) tokens.push({ newline: true });
-      }
-    }
-
-    const lines = [];
-    let current = [];
-    let width = 0;
-
-    const measure = (token) => {
-      doc.setFont('helvetica', token.bold ? 'bold' : 'normal');
-      doc.setFontSize(fontSize);
-      return doc.getTextWidth(token.text);
-    };
-
-    for (const token of tokens) {
-      if (token.newline) {
-        lines.push(current);
-        current = [];
-        width = 0;
-        continue;
-      }
-      if (current.length === 0 && /^\s+$/.test(token.text)) {
-        continue;
-      }
-      const w = measure(token);
-      if (width + w > maxWidth && current.length > 0) {
-        lines.push(current);
-        current = [];
-        width = 0;
-        if (/^\s+$/.test(token.text)) continue;
-      }
-      current.push(token);
-      width += w;
-    }
-    if (current.length) lines.push(current);
-
-    let yPos = y;
-    for (const line of lines) {
-      let xPos = x;
-      for (const token of line) {
-        doc.setFont('helvetica', token.bold ? 'bold' : 'normal');
-        doc.setFontSize(fontSize);
-        doc.text(token.text, xPos, yPos);
-        xPos += doc.getTextWidth(token.text);
-      }
-      yPos += lineHeight;
-    }
-
-    return { lines: lines.length, height: lines.length * lineHeight };
-  }
-
-  tryParseEmbeddedJson(text) {
-    if (typeof text !== 'string') return null;
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
-  }
-
-  async callGenerateApi() {
-    const baseUrl = this.getBackendBaseUrl();
-    const payload = {
-      templateId: this.selectedTemplateId,
-      jobDescription: this.jdText.value,
-      position: this.positionInput.value,
-      company: this.companyInput.value
-    };
-
-    const res = await fetch(`${baseUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      if (res.status === 404 && (err.error || '').includes('Template not found')) {
-        await this.loadTemplates();
-        throw new Error('Template not found on backend. Refresh templates or upload it in the admin page.');
-      }
-      throw new Error(err.error || `Backend error (${res.status})`);
-    }
-
-    return await res.json();
-  }
-
-  updateProgress(percent, text) {
-    const progressFill = this.generateStatus.querySelector('.progress-fill');
-    const progressText = this.generateStatus.querySelector('.progress-text');
-    progressFill.style.width = `${percent}%`;
-    progressText.textContent = text;
-  }
-
-  showDownloadSection() {
-    this.downloadSection.classList.remove('hidden');
-    const filename = this.generateFilename();
-    this.downloadSection.querySelector('.download-filename').textContent = filename;
-    if (this.matchScore) {
-      this.matchScoreValue.textContent = `${this.matchScore}%`;
-      this.matchScoreEl.classList.remove('hidden');
-    } else {
-      this.matchScoreEl.classList.add('hidden');
-    }
-  }
-
-  generateFilename() {
-    const name = this.sanitizeFilename(this.generatedResume?.contact?.name || this.resumeData?.name || 'User');
-    const company = this.sanitizeFilename(this.jdData?.company || 'Company');
-    const position = this.sanitizeFilename(this.jdData?.position || 'Position');
-    const date = new Date().toISOString().split('T')[0];
-    return `${name}-${position}-${company}-${date}`;
-  }
-
-  sanitizeFilename(str) {
-    return str.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').substring(0, 30);
-  }
-
+  // --- Download ---
+  
   async downloadResume(format) {
+    if (!this.currentResume) return;
+    
+    if (format === 'pdf') {
+       this.generatePDF(this.currentResume);
+    } else if (format === 'docx') {
+       this.generateDOCX(this.currentResume);
+    }
+  }
+  
+  generatePDF(rawResumeData) {
     try {
-      const filename = this.generateFilename();
-      const font = 'Calibri';
+        const resumeData = this.normalizeProfileData(rawResumeData);
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({
+          orientation: 'portrait',
+          unit: 'mm',
+          format: 'letter'
+        });
 
-      let blob;
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const marginSide = 19.05;   // 0.75 inch
+        const marginTop = 25.4;     // 1 inch
+        const marginBottom = 25.4;  // 1 inch
+        const contentWidth = pageWidth - (marginSide * 2);
+        let yPos = marginTop;
+        const afterPara = 1.5;
 
-      if (format === 'pdf') {
-        try {
-          const docxBlob = await this.generateDOCX(this.generatedResume, font);
-          blob = await this.convertDocxToPdf(docxBlob);
-        } catch (error) {
-          const message = String(error?.message || error);
-          console.warn('DOCX->PDF conversion failed:', error);
-          if (message.includes('LibreOffice not found')) {
-            throw new Error('LibreOffice is not installed. Install it to enable DOCX-to-PDF conversion.');
+        // Use helvetica (standard ATS-safe font available in jsPDF)
+        doc.setFont('helvetica');
+
+        const checkPageBreak = (neededSpace) => {
+          if (yPos + neededSpace > pageHeight - marginBottom) {
+            doc.addPage();
+            yPos = marginTop;
+            return true;
           }
-          // Fallback only for non-install-related errors
-          blob = await this.generatePDF(this.generatedResume, font);
-        }
-      } else {
-        blob = await this.generateDOCX(this.generatedResume, font);
-      }
+          return false;
+        };
 
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${filename}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+        const ensureSectionStart = (minBodyHeight = 4.2) => {
+          // Keep section header + at least one body line together
+          const headerHeight = 5 + afterPara;
+          checkPageBreak(headerHeight + minBodyHeight);
+        };
 
-    } catch (error) {
-      console.error('Error downloading resume:', error);
-      alert('Error downloading resume: ' + error.message);
-    }
-  }
+        const drawSectionLine = () => {
+          yPos += 3;
+          doc.setDrawColor(150, 150, 150);
+          doc.setLineWidth(0.3);
+          doc.line(marginSide, yPos, pageWidth - marginSide, yPos);
+          yPos += 3;
+        };
 
+        const skillCategoryLabels = {
+          frontend: 'Frontend',
+          backend: 'Backend',
+          database: 'Database',
+          security: 'Security',
+          ai_llm: 'AI & LLM Systems',
+          cloud_devops: 'Cloud & DevOps',
+          testing: 'Testing & Quality',
+          collaboration: 'Collaboration',
+          technical: 'Technical',
+          soft: 'Soft Skills'
+        };
 
-  async convertDocxToPdf(docxBlob) {
-    const baseUrl = this.getBackendBaseUrl();
-    const formData = new FormData();
-    formData.append('file', docxBlob, 'resume.docx');
+        // --- Contact Section (centered header) ---
+        const info = resumeData.contact;
+        const name = info.name || 'Name';
+        const email = info.email;
+        const phone = info.phone;
+        const location = info.location;
+        const linkedin = info.linkedin;
+        const website = info.website;
 
-    const res = await fetch(`${baseUrl}/api/convert-docx-to-pdf`, {
-      method: 'POST',
-      body: formData
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `PDF conversion failed (${res.status})`);
-    }
-
-    return await res.blob();
-  }
-
-  // ========== PDF Generation ==========
-
-  async generatePDF(resumeData, font) {
-    if (!window.jspdf) {
-      throw new Error('jsPDF library not loaded');
-    }
-
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'letter'
-    });
-
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 19.05; // 0.75 inch
-    const contentWidth = pageWidth - (margin * 2);
-    let yPos = margin;
-
-    const lineHeight = (pt) => (pt * 0.3528) * 1.15;
-    const spacing = (pt) => pt * 0.3528;
-    const afterPara = spacing(6);
-    const afterHeading = spacing(3);
-    const afterRule = spacing(6);
-    const afterBullet = spacing(3);
-
-    doc.setFont('helvetica');
-
-    const checkPageBreak = (neededSpace) => {
-      if (yPos + neededSpace > pageHeight - margin) {
-        doc.addPage();
-        yPos = margin;
-      }
-    };
-
-    const addSectionHeading = (title) => {
-      // Keep heading + separator + at least one body line together
-      const headingBlock = lineHeight(13) + afterHeading;
-      const minBodyBlock = lineHeight(11) + afterHeading;
-      const minBlock = headingBlock + minBodyBlock;
-      checkPageBreak(minBlock);
-      doc.setFontSize(13);
-      doc.setFont('helvetica', 'bold');
-      doc.text(title, margin, yPos);
-      yPos += lineHeight(5);
-      // Section separator line (heading above, content below)
-      yPos += 0.5;
-      doc.setDrawColor(0, 0, 0);
-      doc.setLineWidth(0.3);
-      doc.line(margin, yPos, pageWidth - margin, yPos);
-      yPos += lineHeight(15);
-    };
-
-    const contact = resumeData.contact || {};
-
-    doc.setFontSize(17);
-    doc.setFont('helvetica', 'bold');
-    doc.text(contact.name || 'Name', margin, yPos);
-    yPos += lineHeight(17) + afterPara;
-
-    const targetTitle = resumeData.targetTitle || resumeData.headline || '';
-    if (targetTitle) {
-      doc.setFontSize(11.5);
-      doc.setFont('helvetica', 'bold');
-      doc.text(targetTitle, margin, yPos);
-      yPos += lineHeight(11.5) + afterPara;
-    }
-
-    const contactParts = [];
-    if (contact.location) contactParts.push(contact.location);
-    if (contact.phone) contactParts.push(contact.phone);
-    if (contact.email) contactParts.push(contact.email);
-    if (contact.linkedin) contactParts.push(contact.linkedin);
-    const github = contact.github || contact.website;
-    if (github) contactParts.push(github);
-
-    if (contactParts.length > 0) {
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'normal');
-      const contactLine = contactParts.join(' | ');
-      const contactLines = doc.splitTextToSize(contactLine, contentWidth);
-      doc.text(contactLines, margin, yPos);
-      yPos += contactLines.length * lineHeight(11) + afterPara;
-    }
-
-    if (resumeData.summary) {
-      addSectionHeading('PROFESSIONAL SUMMARY');
-            doc.setFontSize(11);
-      doc.setFont('helvetica', 'normal');
-      const summaryRender = this.renderRichTextPdf(doc, resumeData.summary, margin, yPos, contentWidth, 11, lineHeight(11));
-      yPos += summaryRender.height + afterPara;
-    }
-
-    if (resumeData.experience && resumeData.experience.length > 0) {
-      addSectionHeading('EXPERIENCE');
-
-      for (const exp of resumeData.experience) {
-        const company = exp.company || '';
-        const title = exp.title || 'Job Title';
-
-        // Keep company/title + dates + at least one bullet together
-        const minRoleBlock = lineHeight(11.5) + lineHeight(11) + lineHeight(11) + afterPara;
-        checkPageBreak(minRoleBlock);
+        // Name: 22pt bold
+        doc.setFontSize(22);
         doc.setFont('helvetica', 'bold');
+        doc.text(name, pageWidth / 2, yPos, { align: 'center' });
+        yPos += 8 + afterPara;
 
-        if (company) {
-          doc.setFontSize(11);
-          const companyText = `${company} | `;
-          doc.text(companyText, margin, yPos);
-          const companyWidth = doc.getTextWidth(companyText);
-          doc.setFontSize(11.5);
-          doc.text(title, margin + companyWidth, yPos);
-        } else {
-          doc.setFontSize(11.5);
-          doc.text(title, margin, yPos);
-        }
-        yPos += lineHeight(11.5);
+        // Contact info: 10pt
+        const contactParts = [];
+        if (email) contactParts.push(email);
+        if (phone) contactParts.push(phone);
+        if (location) contactParts.push(location);
 
-        const expDates = exp.dates ? this.formatDateRange(exp.dates) : '';
-        if (expDates) {
-          doc.setFontSize(11);
+        if (contactParts.length > 0) {
+          doc.setFontSize(10);
           doc.setFont('helvetica', 'normal');
-          doc.text(expDates, margin, yPos);
-          yPos += lineHeight(11) + afterPara;
-        } else {
-          yPos += afterPara;
+          doc.text(contactParts.join('  |  '), pageWidth / 2, yPos, { align: 'center' });
+          yPos += 4.5 + afterPara;
         }
 
-        if (exp.bullets && exp.bullets.length > 0) {
-          doc.setFontSize(11);
-          doc.setFont('helvetica', 'normal');
-          const bulletIndent = 6.35; // ~0.25 inch
-          for (const bullet of exp.bullets) {
-            const bulletMeasure = this.renderBulletPdf(
-              doc,
-              bullet,
-              margin + bulletIndent,
-              yPos,
-              contentWidth - bulletIndent,
-              11,
-              lineHeight(11),
-              false
-            );
-            checkPageBreak(bulletMeasure.height + afterBullet);
-            const bulletRender = this.renderBulletPdf(
-              doc,
-              bullet,
-              margin + bulletIndent,
-              yPos,
-              contentWidth - bulletIndent,
-              11,
-              lineHeight(11),
-              true
-            );
-            yPos += bulletRender.height + afterBullet;
-          }
+        // LinkedIn/Website: 10pt blue
+        const webParts = [];
+        if (linkedin) webParts.push(linkedin);
+        if (website) webParts.push(website);
+        if (webParts.length > 0) {
+          doc.setFontSize(10);
+          doc.setTextColor(0, 0, 150);
+          doc.text(webParts.join('  |  '), pageWidth / 2, yPos, { align: 'center' });
+          doc.setTextColor(0, 0, 0);
+          yPos += 4.5 + afterPara;
         }
 
-        yPos += afterPara;
-      }
-    }
+        drawSectionLine();
 
-    if (resumeData.education && resumeData.education.length > 0) {
-      addSectionHeading('EDUCATION');
+        // --- Professional Summary ---
+        if (resumeData.summary) {
+          ensureSectionStart(4.2);
+          doc.setFontSize(12);
+          doc.setFont('helvetica', 'bold');
+          doc.text('PROFESSIONAL SUMMARY', marginSide, yPos);
+          
+          drawSectionLine();
 
-      for (const edu of resumeData.education) {
-        const school = edu.school || edu.institution || 'University';
-        const degree = edu.degree || '';
-        const faculty = edu.faculty || '';
-        const line1 = degree ? `${school}, ${degree}` : `${school}`;
-
-        // Keep school line + dates together
-        checkPageBreak(lineHeight(11) * 2 + afterPara);
-        doc.setFontSize(11);
-        const eduSegments = [
-          { text: school, bold: true },
-          { text: degree ? `, ${degree}` : '', bold: false }
-        ];
-        const eduLineRender = this.renderSegmentsPdf(doc, eduSegments, margin, yPos, contentWidth, 11, lineHeight(11));
-        yPos += eduLineRender.height;
-
-        const eduDates = edu.dates ? this.formatDateRange(edu.dates) : '';
-        if (eduDates) {
-          doc.text(eduDates, margin, yPos);
-          yPos += lineHeight(11);
+          // Use renderRichTextPdf for bold support
+          const result = this.renderRichTextPdf(
+            doc,
+            resumeData.summary,
+            marginSide,
+            yPos,
+            contentWidth,
+            10,
+            4.2,
+            true
+          );
+          yPos += result.height + afterPara;
         }
 
-        if (faculty) {
-          doc.text(faculty, margin, yPos);
-          yPos += lineHeight(11);
-        }
+        // --- Work Experience ---
+        if (resumeData.experience && resumeData.experience.length > 0) {
+          ensureSectionStart(4.2);
+          doc.setFontSize(12);
+          doc.setFont('helvetica', 'bold');
+          doc.text('WORK EXPERIENCE', marginSide, yPos);
+          
+          drawSectionLine();
 
-        yPos += afterPara;
-      }
-    }
+          for (const exp of resumeData.experience) {
+            checkPageBreak(20);
 
-    if (resumeData.skills) {
-      addSectionHeading('SKILLS');
-
-      const labels = {
-        frontend: 'Frontend',
-        backend: 'Backend',
-        databases: 'Databases',
-        cloud_devops: 'Cloud & DevOps',
-        testing: 'Testing & Quality'
-      };
-      const order = ['frontend', 'backend', 'databases', 'cloud_devops', 'testing'];
-
-      if (typeof resumeData.skills === 'object' && !Array.isArray(resumeData.skills)) {
-        for (const key of order) {
-          const skills = resumeData.skills[key];
-          if (skills && skills.length > 0) {
-            checkPageBreak(lineHeight(11) + afterHeading);
+            // Title: 11pt bold
             doc.setFontSize(11);
             doc.setFont('helvetica', 'bold');
-            const label = `${labels[key]}: `;
-            doc.text(label, margin, yPos);
-            const labelWidth = doc.getTextWidth(label);
+            doc.text(exp.title || 'Position', marginSide, yPos);
+
+            // Dates right-aligned: 10pt
+            const dates = this.formatDateRange(exp.dates);
+            if (dates) {
+              doc.setFontSize(10);
+              doc.setFont('helvetica', 'normal');
+              doc.text(dates, pageWidth - marginSide, yPos, { align: 'right' });
+            }
+            yPos += 4.5;
+
+            // Company and location: 10pt italic
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'italic');
+            let companyLine = exp.company || '';
+            if (exp.location) companyLine += ` | ${exp.location}`;
+            doc.text(companyLine, marginSide, yPos);
             doc.setFont('helvetica', 'normal');
-            const skillsStr = skills.map(skill => this.stripBoldMarkers(skill)).join(', ');
-            const skillLines = doc.splitTextToSize(skillsStr, contentWidth - labelWidth);
-            doc.text(skillLines[0], margin + labelWidth, yPos);
-            yPos += lineHeight(11);
-            if (skillLines.length > 1) {
-              for (let i = 1; i < skillLines.length; i++) {
-                doc.text(skillLines[i], margin, yPos);
-                yPos += lineHeight(11);
+            yPos += 4 + afterPara;
+
+            // Bullets: 10pt with standard bullet character
+            const bullets = exp.bullets;
+            if (bullets && bullets.length > 0) {
+              for (const bullet of bullets) {
+                // Pre-calculate height
+                const heightCheck = this.renderBulletPdf(
+                    doc, bullet, marginSide + 3, yPos, contentWidth - 5, 10, 4.0, false
+                );
+                
+                checkPageBreak(heightCheck.height);
+                
+                const result = this.renderBulletPdf(
+                    doc, bullet, marginSide + 3, yPos, contentWidth - 5, 10, 4.0, true
+                );
+                yPos += result.height + afterPara;
               }
             }
-            yPos += afterHeading;
+
+            yPos += afterPara;
           }
         }
-      } else if (Array.isArray(resumeData.skills)) {
-        doc.setFontSize(11);
-        doc.setFont('helvetica', 'normal');
-        const skillsStr = resumeData.skills.map(skill => this.stripBoldMarkers(skill)).join(', ');
-        const skillLines = doc.splitTextToSize(skillsStr, contentWidth);
-        doc.text(skillLines, margin, yPos);
-        yPos += skillLines.length * lineHeight(11) + afterHeading;
-      }
-    }
 
-    return doc.output('blob');
+        // --- Education ---
+        if (resumeData.education && resumeData.education.length > 0) {
+          ensureSectionStart(4.2);
+          doc.setFontSize(12);
+          doc.setFont('helvetica', 'bold');
+          doc.text('EDUCATION', marginSide, yPos);
+          
+          drawSectionLine();
+
+          for (const edu of resumeData.education) {
+            checkPageBreak(10);
+
+            // School: 11pt bold
+            const school = edu.school;
+            if (school) {
+              doc.setFontSize(11);
+              doc.setFont('helvetica', 'bold');
+              doc.text(school, marginSide, yPos);
+            }
+            // Dates right-aligned: 10pt
+            const dates = this.formatDateRange(edu.dates);
+            if (dates) {
+              doc.setFontSize(10);
+              doc.setFont('helvetica', 'normal');
+              doc.text(dates, pageWidth - marginSide, yPos, { align: 'right' });
+            }
+            yPos += 4.5;
+
+            // Degree line: 10pt
+            let degreeLine = edu.degree || '';
+            const faculty = edu.faculty;
+            if (faculty && !degreeLine.toLowerCase().includes(faculty.toLowerCase())) {
+              degreeLine += degreeLine ? `, ${faculty}` : faculty;
+            }
+            if (degreeLine) {
+              doc.setFontSize(10);
+              doc.setFont('helvetica', 'normal');
+              doc.text(degreeLine, marginSide, yPos);
+              yPos += 4;
+            }
+
+            // GPA and honors: 10pt
+            const extras = [];
+            if (edu.gpa) extras.push(`GPA: ${edu.gpa}`);
+            if (edu.honors) extras.push(edu.honors);
+            if (extras.length > 0) {
+              doc.setFontSize(10);
+              doc.setFont('helvetica', 'normal');
+              doc.text(extras.join(' | '), marginSide, yPos);
+              yPos += 4;
+            }
+
+            yPos += afterPara;
+          }
+        }
+
+        // --- Skills (categorized) ---
+        if (resumeData.skills) {
+          ensureSectionStart(4.0);
+          doc.setFontSize(12);
+          doc.setFont('helvetica', 'bold');
+          doc.text('SKILLS', marginSide, yPos);
+          
+          drawSectionLine();
+
+          if (typeof resumeData.skills === 'object' && !Array.isArray(resumeData.skills)) {
+            const categoryOrder = ['frontend', 'backend', 'database', 'security', 'ai_llm', 'cloud_devops', 'testing', 'collaboration', 'technical', 'soft'];
+            for (const key of categoryOrder) {
+              const skills = resumeData.skills[key];
+              if (skills && skills.length > 0) {
+                checkPageBreak(6);
+                const label = skillCategoryLabels[key] || key;
+                doc.setFontSize(10);
+                doc.setFont('helvetica', 'bold');
+                doc.text(`${label}: `, marginSide, yPos);
+                const labelWidth = doc.getTextWidth(`${label}: `);
+                doc.setFont('helvetica', 'normal');
+                
+                const skillsStr = Array.isArray(skills) ? skills.join(', ') : skills;
+                const skillLines = doc.splitTextToSize(skillsStr, contentWidth - labelWidth);
+                doc.text(skillLines[0], marginSide + labelWidth, yPos);
+                if (skillLines.length > 1) {
+                  for (let sl = 1; sl < skillLines.length; sl++) {
+                    yPos += 4.0;
+                    doc.text(skillLines[sl], marginSide + labelWidth, yPos);
+                  }
+                }
+                yPos += 4.0 + afterPara;
+              }
+            }
+          } else if (Array.isArray(resumeData.skills)) {
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            
+            // Handle if skills is array of strings or objects (v2 structure sometimes has objects)
+            const skillsStr = resumeData.skills.map(s => typeof s === 'string' ? s : s.name).join(', ');
+            
+            const skillLines = doc.splitTextToSize(skillsStr, contentWidth);
+            doc.text(skillLines, marginSide, yPos);
+            yPos += skillLines.length * 4.0 + afterPara;
+          }
+        }
+
+        doc.save('resume.pdf');
+    } catch (err) {
+        console.error('PDF generation failed', err);
+        alert('PDF generation failed. Check console.');
+    }
   }
-  // ========== DOCX Generation ==========
+  
+  generateDOCX(rawResumeData) {
+      try {
+          const resumeData = this.normalizeProfileData(rawResumeData);
+          const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, TabStopPosition, TabStopType } = window.docx;
+          
+          const children = [];
+          const spAfter = 120; // 6pt = 120 twips
+          const fontFamily = 'Calibri';
 
-  async generateDOCX(resumeData, font) {
-    if (!window.docx) {
-      throw new Error('docx library not loaded');
-    }
+          // Handle personalInfo wrapper from v2 or root properties from v1
+          const info = resumeData.contact;
+          const name = info.name || 'Resume';
+          const email = info.email;
+          const phone = info.phone;
+          const location = info.location;
+          const linkedin = info.linkedin;
+          const website = info.website;
 
-    const { Document, Paragraph, TextRun, Packer } = window.docx;
+          const skillCategoryLabels = {
+            frontend: 'Frontend',
+            backend: 'Backend',
+            database: 'Database',
+            security: 'Security',
+            ai_llm: 'AI & LLM Systems',
+            cloud_devops: 'Cloud & DevOps',
+            testing: 'Testing & Quality',
+            collaboration: 'Collaboration',
+            technical: 'Technical',
+            soft: 'Soft Skills'
+          };
 
-    const children = [];
-    const contact = resumeData.contact || {};
-
-    const SIZE_NAME = 34;    // 17pt
-    const SIZE_SECTION = 26; // 13pt
-    const SIZE_COMPANY = 22; // 11pt
-    const SIZE_TITLE = 23;   // 11.5pt
-    const SIZE_BODY = 22;    // 11pt
-
-    const LINE = 276;        // 1.15 line spacing (240 * 1.15)
-    const AFTER_PARA = 120;  // 6pt
-    const AFTER_HEADING = 60; // 3pt
-    const AFTER_BULLET = 60; // 3pt
-
-    const addSectionHeader = (title) => {
-      children.push(new Paragraph({
-        children: [new TextRun({ text: title, bold: true, size: SIZE_SECTION, font: font })],
-        border: { bottom: { color: '999999', style: window.docx.BorderStyle.SINGLE, size: 6 } },
-        spacing: { before: 0, after: AFTER_HEADING, line: LINE },
-        keepNext: true,
-        keepLines: true
-      }));
-    };
-
-    children.push(new Paragraph({
-      children: [new TextRun({ text: contact.name || 'Name', bold: true, size: SIZE_NAME, font: font })],
-      spacing: { before: 0, after: AFTER_PARA, line: LINE }
-    }));
-
-    const targetTitle = resumeData.targetTitle || resumeData.headline || '';
-    if (targetTitle) {
-      children.push(new Paragraph({
-        children: [new TextRun({ text: targetTitle, bold: true, size: SIZE_TITLE, font: font })],
-        spacing: { before: 0, after: AFTER_PARA, line: LINE }
-      }));
-    }
-
-    const contactParts = [];
-    if (contact.location) contactParts.push(contact.location);
-    if (contact.phone) contactParts.push(contact.phone);
-    if (contact.email) contactParts.push(contact.email);
-    if (contact.linkedin) contactParts.push(contact.linkedin);
-    const github = contact.github || contact.website;
-    if (github) contactParts.push(github);
-
-    if (contactParts.length > 0) {
-      children.push(new Paragraph({
-        children: [new TextRun({ text: contactParts.join(' | '), size: SIZE_BODY, font: font })],
-        spacing: { before: 0, after: AFTER_PARA, line: LINE }
-      }));
-    }
-
-    if (resumeData.summary) {
-      addSectionHeader('PROFESSIONAL SUMMARY');
-      children.push(new Paragraph({
-        children: this.buildDocxRuns(resumeData.summary, font, SIZE_BODY),
-        spacing: { before: 0, after: AFTER_PARA, line: LINE }
-      }));
-    }
-
-    if (resumeData.experience?.length > 0) {
-      addSectionHeader('EXPERIENCE');
-
-      for (const exp of resumeData.experience) {
-        const company = exp.company || '';
-        const title = exp.title || 'Job Title';
-        const companyText = company ? `${company} | ` : '';
-
-        children.push(new Paragraph({
-          children: [
-            new TextRun({ text: companyText, bold: true, size: SIZE_COMPANY, font: font }),
-            new TextRun({ text: title, bold: true, size: SIZE_TITLE, font: font })
-          ],
-          spacing: { before: 0, after: 0, line: LINE },
-          keepNext: true,
-          keepLines: true
-        }));
-
-        const expDates = exp.dates ? this.formatDateRange(exp.dates) : '';
-        if (expDates) {
+          // --- Name (22pt = 44 half-pts) ---
           children.push(new Paragraph({
-            children: [new TextRun({ text: expDates, size: SIZE_BODY, font: font })],
-            spacing: { before: 0, after: AFTER_PARA, line: LINE }
+            children: [
+              new TextRun({
+                text: name,
+                bold: true,
+                size: 44,
+                font: fontFamily
+              })
+            ],
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 0, after: spAfter }
           }));
-        }
 
-        if (exp.bullets?.length > 0) {
-          for (const bullet of exp.bullets) {
-            children.push(new Paragraph({
-              children: this.buildDocxRuns(bullet, font, SIZE_BODY),
-              bullet: { level: 0 },
-              spacing: { before: 0, after: AFTER_BULLET, line: LINE }
-            }));
-          }
-        }
-      }
-    }
+          // --- Contact info (10pt = 20 half-pts) ---
+          const contactParts = [];
+          if (email) contactParts.push(email);
+          if (phone) contactParts.push(phone);
+          if (location) contactParts.push(location);
 
-    if (resumeData.education?.length > 0) {
-      addSectionHeader('EDUCATION');
-
-      for (const edu of resumeData.education) {
-        const school = edu.school || edu.institution || 'University';
-        const degree = edu.degree || '';
-        const faculty = edu.faculty || '';
-        const line1 = degree ? `${school}, ${degree}` : school;
-
-        const eduDates = edu.dates ? this.formatDateRange(edu.dates) : '';
-        const line1After = (!eduDates && !faculty) ? AFTER_PARA : 0;
-        const eduRuns = [
-          new TextRun({ text: school, bold: true, size: SIZE_BODY, font: font })
-        ];
-        if (degree) {
-          eduRuns.push(new TextRun({ text: `, ${degree}`, size: SIZE_BODY, font: font }));
-        }
-        children.push(new Paragraph({
-          children: eduRuns,
-          spacing: { before: 0, after: line1After, line: LINE },
-          keepNext: true,
-          keepLines: true
-        }));
-
-        if (eduDates) {
-          const datesAfter = !faculty ? AFTER_PARA : 0;
-          children.push(new Paragraph({
-            children: [new TextRun({ text: eduDates, size: SIZE_BODY, font: font })],
-            spacing: { before: 0, after: datesAfter, line: LINE }
-          }));
-        }
-
-        if (faculty) {
-          children.push(new Paragraph({
-            children: [new TextRun({ text: faculty, size: SIZE_BODY, font: font })],
-            spacing: { before: 0, after: AFTER_PARA, line: LINE }
-          }));
-        }
-      }
-    }
-
-    if (resumeData.skills) {
-      addSectionHeader('SKILLS');
-
-      const labels = {
-        frontend: 'Frontend',
-        backend: 'Backend',
-        databases: 'Databases',
-        cloud_devops: 'Cloud & DevOps',
-        testing: 'Testing & Quality'
-      };
-      const order = ['frontend', 'backend', 'databases', 'cloud_devops', 'testing'];
-
-      if (typeof resumeData.skills === 'object' && !Array.isArray(resumeData.skills)) {
-        for (const key of order) {
-          const skills = resumeData.skills[key];
-          if (skills && skills.length > 0) {
+          if (contactParts.length > 0) {
             children.push(new Paragraph({
               children: [
-                new TextRun({ text: `${labels[key]}: `, bold: true, size: SIZE_BODY, font: font }),
-                new TextRun({ text: skills.map(skill => this.stripBoldMarkers(skill)).join(', '), size: SIZE_BODY, font: font })
+                new TextRun({
+                  text: contactParts.join('  |  '),
+                  size: 20,
+                  font: fontFamily
+                })
               ],
-              spacing: { before: 0, after: AFTER_HEADING, line: LINE }
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 0, after: spAfter }
             }));
           }
-        }
-      } else if (Array.isArray(resumeData.skills)) {
-        children.push(new Paragraph({
-          children: [new TextRun({ text: resumeData.skills.map(skill => this.stripBoldMarkers(skill)).join(', '), size: SIZE_BODY, font: font })],
-          spacing: { before: 0, after: AFTER_HEADING, line: LINE }
-        }));
-      }
-    }
 
-    const doc = new Document({
-      sections: [{
-        properties: {
-          page: {
-            margin: {
-              top: 1080,
-              bottom: 1080,
-              right: 1080,
-              left: 1080
+          // --- LinkedIn/Website (10pt = 20 half-pts, blue) ---
+          const webParts = [];
+          if (linkedin) webParts.push(linkedin);
+          if (website) webParts.push(website);
+
+          if (webParts.length > 0) {
+            children.push(new Paragraph({
+              children: [
+                new TextRun({
+                  text: webParts.join('  |  '),
+                  size: 20,
+                  color: '0000AA',
+                  font: fontFamily
+                })
+              ],
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 0, after: spAfter }
+            }));
+          }
+
+          // --- Section header helper (12pt = 24 half-pts, bold, bottom border) ---
+          const addSectionHeader = (title) => {
+            children.push(new Paragraph({
+              children: [
+                new TextRun({
+                  text: title,
+                  bold: true,
+                  size: 24,
+                  font: fontFamily
+                })
+              ],
+              border: {
+                bottom: {
+                  color: '999999',
+                  style: BorderStyle.SINGLE,
+                  size: 6
+                }
+              },
+              spacing: { before: 200, after: spAfter },
+              keepNext: true,
+              keepLines: true
+            }));
+          };
+
+          // --- Professional Summary (10pt = 20 half-pts) ---
+          if (resumeData.summary) {
+            addSectionHeader('PROFESSIONAL SUMMARY');
+            children.push(new Paragraph({
+              children: this.buildDocxRuns(resumeData.summary, fontFamily, 20),
+              spacing: { before: 0, after: spAfter }
+            }));
+          }
+
+          // --- Work Experience ---
+          if (resumeData.experience && resumeData.experience.length > 0) {
+            addSectionHeader('WORK EXPERIENCE');
+
+            for (const exp of resumeData.experience) {
+              // Title (11pt = 22 half-pts bold) with dates right-aligned (10pt = 20)
+              const dates = this.formatDateRange(exp.dates);
+              
+              children.push(new Paragraph({
+                children: [
+                  new TextRun({
+                    text: exp.title || 'Position',
+                    bold: true,
+                    size: 22,
+                    font: fontFamily
+                  }),
+                  new TextRun({
+                    text: `\t${dates ? dates : ''}`,
+                    size: 20,
+                    font: fontFamily
+                  })
+                ],
+                tabStops: [
+                  {
+                    type: TabStopType.RIGHT,
+                    position: TabStopPosition.MAX
+                  }
+                ],
+                spacing: { before: 80, after: 0 }
+              }));
+
+              // Company and location (10pt = 20 half-pts, italic)
+              let companyLine = exp.company || '';
+              if (exp.location) companyLine += ` | ${exp.location}`;
+
+              children.push(new Paragraph({
+                children: [
+                  new TextRun({
+                    text: companyLine,
+                    italics: true,
+                    size: 20,
+                    font: fontFamily
+                  })
+                ],
+                spacing: { before: 0, after: spAfter }
+              }));
+
+              // Bullets (10pt = 20 half-pts, standard bullet)
+              const bullets = exp.bullets;
+              if (bullets && bullets.length > 0) {
+                for (const bullet of bullets) {
+                  children.push(new Paragraph({
+                    children: this.buildDocxRuns(bullet, fontFamily, 20),
+                    bullet: {
+                      level: 0
+                    },
+                    spacing: { before: 0, after: spAfter }
+                  }));
+                }
+              }
             }
           }
-        },
-        children: children
-      }]
-    });
 
-    return await Packer.toBlob(doc);
+          // --- Education ---
+          if (resumeData.education && resumeData.education.length > 0) {
+            addSectionHeader('EDUCATION');
+
+            for (const edu of resumeData.education) {
+              // School (11pt = 22 half-pts bold) with dates right-aligned
+              const dates = this.formatDateRange(edu.dates);
+              
+              children.push(new Paragraph({
+                children: [
+                  new TextRun({
+                    text: edu.school || 'Institution',
+                    bold: true,
+                    size: 22,
+                    font: fontFamily
+                  }),
+                  new TextRun({
+                    text: `\t${dates ? dates : ''}`,
+                    size: 20,
+                    font: fontFamily
+                  })
+                ],
+                tabStops: [
+                  {
+                    type: TabStopType.RIGHT,
+                    position: TabStopPosition.MAX
+                  }
+                ],
+                spacing: { before: 80, after: 0 }
+              }));
+
+              // Degree line
+              let degreeLine = edu.degree || '';
+              const faculty = edu.faculty;
+              if (faculty && !degreeLine.toLowerCase().includes(faculty.toLowerCase())) {
+                degreeLine += degreeLine ? `, ${faculty}` : faculty;
+              }
+              if (degreeLine) {
+                children.push(new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: degreeLine,
+                      size: 20,
+                      font: fontFamily
+                    })
+                  ],
+                  spacing: { before: 0, after: 0 }
+                }));
+              }
+
+              // GPA and honors
+              const extras = [];
+              if (edu.gpa) extras.push(`GPA: ${edu.gpa}`);
+              if (edu.honors) extras.push(edu.honors);
+              if (extras.length > 0) {
+                children.push(new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: extras.join(' | '),
+                      size: 20,
+                      font: fontFamily
+                    })
+                  ],
+                  spacing: { before: 0, after: spAfter }
+                }));
+              }
+            }
+          }
+
+          // --- Skills (categorized) ---
+          if (resumeData.skills) {
+            addSectionHeader('SKILLS');
+
+            if (typeof resumeData.skills === 'object' && !Array.isArray(resumeData.skills)) {
+              const categoryOrder = ['frontend', 'backend', 'database', 'security', 'ai_llm', 'cloud_devops', 'testing', 'collaboration', 'technical', 'soft'];
+              for (const key of categoryOrder) {
+                const skills = resumeData.skills[key];
+                if (skills && skills.length > 0) {
+                  const label = skillCategoryLabels[key] || key;
+                  const skillsStr = Array.isArray(skills) ? skills.join(', ') : skills;
+                  
+                  children.push(new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: `${label}: `,
+                        bold: true,
+                        size: 20,
+                        font: fontFamily
+                      }),
+                      new TextRun({
+                        text: skillsStr,
+                        size: 20,
+                        font: fontFamily
+                      })
+                    ],
+                    spacing: { before: 0, after: spAfter }
+                  }));
+                }
+              }
+            } else if (Array.isArray(resumeData.skills)) {
+               const skillsStr = resumeData.skills.map(s => typeof s === 'string' ? s : s.name).join(', ');
+               children.push(new Paragraph({
+                children: [
+                  new TextRun({
+                    text: skillsStr,
+                    size: 20,
+                    font: fontFamily
+                  })
+                ],
+                spacing: { before: 0, after: spAfter }
+              }));
+            }
+          }
+
+          const doc = new Document({
+              sections: [{
+                  properties: {
+                    page: {
+                      margin: {
+                        top: 1440,    // 1 inch
+                        bottom: 1440, // 1 inch
+                        right: 1080,  // 0.75 inch
+                        left: 1080    // 0.75 inch
+                      }
+                    }
+                  },
+                  children: children,
+              }],
+          });
+
+          Packer.toBlob(doc).then((blob) => {
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "resume.docx";
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+          });
+      } catch (err) {
+          console.error('DOCX generation failed', err);
+          alert('DOCX generation failed. Check console.');
+      }
+  }
+  
+  handleAuth(e) {
+      // Stub if needed
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  new PopupController();
-});
-
-// ========== Injected Functions (run in page context) ==========
-
-// Function to extract JD from job posting page
-function extractJDFromPage() {
-  try {
-    let jobDescription = '';
-    let position = '';
-    let company = '';
-
-    // LinkedIn
-    if (window.location.hostname.includes('linkedin.com')) {
-      const titleEl = document.querySelector('.job-details-jobs-unified-top-card__job-title h1') ||
-        document.querySelector('.jobs-unified-top-card__job-title') ||
-        document.querySelector('.t-24.t-bold');
-      if (titleEl) position = titleEl.textContent.trim();
-
-      const companyEl = document.querySelector('.job-details-jobs-unified-top-card__company-name') ||
-        document.querySelector('.jobs-unified-top-card__company-name a');
-      if (companyEl) company = companyEl.textContent.trim();
-
-      const descEl = document.querySelector('.jobs-description__content') ||
-        document.querySelector('.jobs-box__html-content');
-      if (descEl) jobDescription = descEl.textContent.trim();
-    }
-    // Indeed
-    else if (window.location.hostname.includes('indeed.com')) {
-      const titleEl = document.querySelector('.jobsearch-JobInfoHeader-title') ||
-        document.querySelector('[data-testid="jobsearch-JobInfoHeader-title"]');
-      if (titleEl) position = titleEl.textContent.trim();
-
-      const companyEl = document.querySelector('[data-testid="inlineHeader-companyName"]') ||
-        document.querySelector('.jobsearch-InlineCompanyRating-companyHeader');
-      if (companyEl) company = companyEl.textContent.trim();
-
-      const descEl = document.querySelector('#jobDescriptionText') ||
-        document.querySelector('.jobsearch-jobDescriptionText');
-      if (descEl) jobDescription = descEl.textContent.trim();
-    }
-    // Glassdoor
-    else if (window.location.hostname.includes('glassdoor.com')) {
-      const titleEl = document.querySelector('[data-test="job-title"]');
-      if (titleEl) position = titleEl.textContent.trim();
-
-      const companyEl = document.querySelector('[data-test="employerName"]');
-      if (companyEl) company = companyEl.textContent.trim();
-
-      const descEl = document.querySelector('.jobDescriptionContent') ||
-        document.querySelector('[data-test="description"]');
-      if (descEl) jobDescription = descEl.textContent.trim();
-    }
-    // Generic extraction
-    else {
-      const titleSelectors = ['h1.job-title', '.job-title h1', '[class*="job-title"]', 'h1[class*="title"]'];
-      for (const sel of titleSelectors) {
-        const el = document.querySelector(sel);
-        if (el && el.textContent.trim().length > 2) {
-          position = el.textContent.trim();
-          break;
-        }
-      }
-
-      const companySelectors = ['.company-name', '[class*="company-name"]', '[class*="employer"]'];
-      for (const sel of companySelectors) {
-        const el = document.querySelector(sel);
-        if (el && el.textContent.trim().length > 1) {
-          company = el.textContent.trim();
-          break;
-        }
-      }
-
-      const descSelectors = [
-        '.job-description',
-        '[class*="job-description"]',
-        '[class*="jobDescription"]',
-        '[class*="career-detail"]',
-        '.job-details',
-        '[class*="job-details"]',
-        '#job-description',
-        '#jobDescriptionText',
-        '[id*="job-description"]',
-        '[data-testid*="job-description"]',
-        '[data-test*="job-description"]',
-        '[class*="description"]',
-        '[id*="description"]',
-        'article',
-        'main'
-      ];
-      for (const sel of descSelectors) {
-        const el = document.querySelector(sel);
-        if (el && el.textContent.trim().length > 200) {
-          jobDescription = el.textContent.trim();
-          break;
-        }
-      }
-      if (!jobDescription || jobDescription.length < 200) {
-        jobDescription = extractBestDescriptionFromDom();
-      }
-    }
-
-    // Fallback
-    if (!jobDescription || jobDescription.length < 100) {
-      const mainContent = document.querySelector('main') || document.querySelector('article') || document.body;
-      jobDescription = mainContent.innerText.substring(0, 10000);
-    }
-
-    if (!position) {
-      const titleParts = document.title.split(/[|\-\u2013\u2014]/);
-      if (titleParts.length > 0) {
-        position = titleParts[0].trim().substring(0, 100);
-      }
-    }
-
-    // Normalize "Position at Company" patterns
-    if (position) {
-      // Strip leading "Job application for ..." or similar wrappers
-      const appMatch = position.match(/^(?:job\s+)?application\s+for\s+(.+)$/i);
-      if (appMatch) {
-        position = appMatch[1].trim();
-      }
-      const atMatch = position.match(/^(.*?)\s+at\s+(.+)$/i);
-      if (atMatch) {
-        position = atMatch[1].trim();
-        if (!company) {
-          company = atMatch[2].trim();
-        }
-      }
-    }
-
-    jobDescription = jobDescription.replace(/\s+/g, ' ').trim().substring(0, 10000);
-
-    return {
-      success: jobDescription.length > 50,
-      jobDescription: jobDescription,
-      position: position,
-      company: company
-    };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
-function extractBestDescriptionFromDom() {
-  const candidates = [];
-  const nodes = document.querySelectorAll('section, article, main, div');
-  const keywordRe = /(responsibilit|requirement|qualification|about the role|what you will|what you'll|you will|you'll|job description|role overview)/i;
-
-  for (const node of nodes) {
-    if (!(node instanceof HTMLElement)) continue;
-    const text = node.innerText ? node.innerText.trim() : '';
-    if (text.length < 200) continue;
-
-    const lower = text.toLowerCase();
-    if (lower.includes('cookie') || lower.includes('privacy') || lower.includes('subscribe')) continue;
-    if (node.querySelector('nav, footer, header, aside')) continue;
-
-    let score = text.length;
-    if (keywordRe.test(text)) score += 2000;
-    if (node.id && /(desc|description|job|role)/i.test(node.id)) score += 1500;
-    if (node.className && /(desc|description|job|role)/i.test(node.className)) score += 1500;
-
-    candidates.push({ text, score });
-  }
-
-  if (!candidates.length) return '';
-  candidates.sort((a, b) => b.score - a.score);
-  return candidates[0].text;
-}
+new PopupController();
