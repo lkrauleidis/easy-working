@@ -14,8 +14,7 @@
     "<all_urls>"
   ],
   "action": {
-    "default_title": "JobBot - Resume Tailor",
-    "default_popup": "popup/popup.html"
+    "default_title": "JobBot - Resume Tailor"
   },
   "side_panel": {
     "default_path": "popup/popup.html"

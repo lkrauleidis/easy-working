@@ -14,442 +14,258 @@ const PORT = process.env.PORT || 3000;
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://duicyjsjljjhhfnnzqep.supabase.co';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable__ggeLPXwqHIIGoNqp6MFNg_osQXN5Wd';
 const TEMPLATES_TABLE = process.env.TEMPLATES_TABLE || 'templates';
-const USERS_TABLE = 'users'; // Renamed from profiles as per request
-const HISTORY_TABLE = 'history';
 
-// Initialize Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false }
 });
 
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
 
-// SPA Fallback: Serve index.html for any unknown route (that isn't /api)
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api')) return next();
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// --- Middleware ---
-
-// Extract and verify user from JWT
-async function authenticate(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ error: 'Missing Authorization header' });
-  }
-  const token = authHeader.replace('Bearer ', '');
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  
-  if (error || !user) {
-    return res.status(401).json({ error: 'Invalid token' });
-  }
-  
-  req.user = user;
-  
-  // Create a scoped Supabase client for this user to respect RLS
-  req.supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: {
-      headers: {
-        Authorization: authHeader
-      }
-    }
-  });
-
-  // Fetch profile
-  const { data: profile, error: profileError } = await req.supabase
-    .from(USERS_TABLE)
-    .select('*')
-    .eq('id', user.id)
+async function readTemplateRecord(id) {
+  const { data, error } = await supabase
+    .from(TEMPLATES_TABLE)
+    .select('id, username, filename, json_data, openai_key, created_at, updated_at')
+    .eq('id', id)
     .maybeSingle();
-
-
-  if (profileError) {
-    console.error('Error fetching profile:', profileError);
+  if (error) {
+    throw new Error(error.message);
   }
-  
-  // Auto-create profile if missing (Self-healing)
-  if (!profile) {
-    console.log(`[Auth] User profile missing for ${user.email} in /me, creating...`);
-    const { data: newProfile, error: createError } = await req.supabase
-        .from(USERS_TABLE)
-        .insert([{ 
-            id: user.id, 
-            email: user.email,
-            is_approved: false,
-            templates_count: 0
-        }])
-        .select()
-        .single();
-    
-    if (!createError) {
-        req.profile = newProfile;
-    } else {
-        console.error('Failed to create missing profile in /me:', createError);
-        req.profile = null;
-    }
-  } else {
-      req.profile = profile;
-  }
-  
-  // Debug Log
-  if (req.profile) {
-      console.log(`[Auth] User: ${user.email}, Approved: ${req.profile.is_approved} (${typeof req.profile.is_approved})`);
-  }
-
-  next();
+  return data || null;
 }
 
-// Check if user is approved
-function requireApproval(req, res, next) {
-  if (!req.profile || !req.profile.is_approved) {
-    return res.status(403).json({ error: 'Account not approved by admin. Please contact support.' });
+async function listTemplates() {
+  const { data, error } = await supabase
+    .from(TEMPLATES_TABLE)
+    .select('id, username, filename, openai_key, created_at, updated_at')
+    .order('created_at', { ascending: false });
+  if (error) {
+    throw new Error(error.message);
   }
-  next();
+  return (data || []).map(row => ({
+    id: row.id,
+    name: row.filename || row.id,
+    username: row.username || row.filename || row.id,
+    updatedAt: row.updated_at || row.created_at || null,
+    hasApiKey: !!row.openai_key
+  }));
 }
 
-// --- Auth Routes ---
+async function writeTemplate(payload) {
+  const data = payload.data || payload;
+  const filename = payload.filename || payload.name || data.name || 'Resume Template';
+  const username = payload.username || filename;
+  const openaiKey = payload.openaiKey || payload.apiKey || '';
 
-app.post('/api/auth/signup', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-  
-  // Basic password validation
-  if (password.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  const insertPayload = {
+    filename,
+    username,
+    json_data: data,
+    openai_key: openaiKey
+  };
+
+  const { data: rows, error } = await supabase
+    .from(TEMPLATES_TABLE)
+    .insert(insertPayload)
+    .select('id, username, filename, json_data, created_at, updated_at')
+    .limit(1);
+
+  if (error) {
+    throw new Error(error.message);
   }
+  return rows && rows[0] ? rows[0] : null;
+}
 
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password
-  });
-
-  if (error) return res.status(400).json({ error: error.message });
-
-  // Create user entry if it doesn't exist
-  if (data.user) {
-    const { error: profileError } = await supabase
-      .from(USERS_TABLE)
-      .insert([
-        { 
-          id: data.user.id,
-          email: email,
-          password: password, // Log password as requested (Note: storing plain password is risky)
-          is_approved: false, // Default to false
-          role: false // Default to user
-        }
-      ])
-      .select();
-      
-    if (profileError) {
-        console.error('Error creating profile:', profileError);
-        // Don't fail the request, but log it. 
-        // If the trigger exists, this might fail with duplicate key, which is fine.
-    }
-  }
-
-  // Simulate sending approval request
-  console.log(`[Auth] New user signup: ${email}. Sending approval request to smartj32outlook.com...`);
-
-  let message = 'Signup successful. Please wait for admin approval.';
-  if (!data.session) {
-    message = 'Signup successful. Please check your email to confirm your account.';
-  }
-
-  res.json({ user: data.user, session: data.session, message });
-});
-
-app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password
-  });
-
-  if (error) return res.status(401).json({ error: error.message });
-
-  // Check approval status immediately
-  let { data: profile } = await supabase
-    .from(USERS_TABLE)
-    .select('is_approved, id')
-    .eq('id', data.user.id)
-    .maybeSingle();
-
-  // Update password log if user exists
-  if (profile) {
-      await supabase.from(USERS_TABLE).update({ password: password }).eq('id', data.user.id);
-  }
-
-  // If user doesn't exist (legacy user or trigger failed), create it
-  if (!profile) {
-      console.log(`[Auth] User missing for ${data.user.email}, creating now...`);
-      const { data: newProfile, error: createError } = await supabase
-        .from(USERS_TABLE)
-        .insert([{ 
-            id: data.user.id, 
-            email: email,
-            password: password,
-            is_approved: false 
-        }])
-        .select()
-        .single();
-        
-      if (!createError) {
-          profile = newProfile;
-      } else {
-          console.error('Failed to create missing user entry:', createError);
-      }
-  }
-
-  if (profile && !profile.is_approved) {
-    return res.status(403).json({ error: 'Account not yet approved by admin.' });
-  }
-
-  res.json({ user: data.user, session: data.session });
-});
-
-app.post('/api/auth/forgot-password', async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email required' });
-  
-  const { error } = await supabase.auth.resetPasswordForEmail(email);
-  if (error) return res.status(400).json({ error: error.message });
-  
-  res.json({ message: 'Password reset email sent' });
-});
-
-app.get('/api/auth/me', authenticate, async (req, res) => {
-  // Sync template count dynamically to be safe
+app.get('/api/templates', async (req, res) => {
   try {
-    const { count, error } = await req.supabase
-        .from(TEMPLATES_TABLE)
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', req.user.id);
-        
-    if (!error && req.profile) {
-        req.profile.templates_count = count;
-        // Optional: Update DB to be in sync (fire and forget)
-        req.supabase.from(USERS_TABLE).update({ templates_count: count }).eq('id', req.user.id).then();
-    }
-  } catch (e) {
-      console.error('Error syncing template count:', e);
-  }
-
-  res.json({ user: req.user, profile: req.profile });
-});
-
-// --- Profile Routes ---
-
-app.put('/api/profile', authenticate, async (req, res) => {
-  try {
-    const { openai_key } = req.body;
-    
-    // Update profile
-    const { data, error } = await req.supabase
-      .from(USERS_TABLE)
-      .update({ openai_key })
-      .eq('id', req.user.id)
-      .select()
-      .single();
-
-    if (error) throw new Error(error.message);
-    
-    // Update req.profile for the response
-    req.profile = data;
-    
-    res.json({ message: 'Profile updated', profile: data });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// --- Template Routes ---
-
-app.get('/api/templates', authenticate, async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from(TEMPLATES_TABLE)
-      .select('id, username, filename, openai_key, created_at, updated_at')
-      .eq('user_id', req.user.id) // Filter by user
-      .order('created_at', { ascending: false });
-      
-    if (error) throw new Error(error.message);
-    
-    const templates = (data || []).map(row => ({
-      id: row.id,
-      name: row.filename || row.id,
-      username: row.username || row.filename || row.id,
-      created_at: row.created_at,
-      updatedAt: row.updated_at || row.created_at || null,
-      hasApiKey: !!row.openai_key
-    }));
-    
+    const templates = await listTemplates();
     res.json({ templates });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/templates/:id', authenticate, async (req, res) => {
+app.get('/api/templates/:id', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from(TEMPLATES_TABLE)
-      .select('id, username, filename, json_data, openai_key, created_at, updated_at')
-      .eq('id', req.params.id)
-      .eq('user_id', req.user.id) // Security check
-      .maybeSingle();
-      
-    if (error) throw new Error(error.message);
-    if (!data) return res.status(404).json({ error: 'Template not found' });
-    
+    const record = await readTemplateRecord(req.params.id);
+    if (!record) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
     res.json({
-      id: data.id,
-      name: data.filename || data.id,
-      username: data.username || data.filename || data.id,
-      data: data.json_data
+      id: record.id,
+      name: record.filename || record.id,
+      username: record.username || record.filename || record.id,
+      data: record.json_data
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.delete('/api/templates/:id', authenticate, async (req, res) => {
-  try {
-    const { error } = await supabase
-      .from(TEMPLATES_TABLE)
-      .delete()
-      .eq('id', req.params.id)
-      .eq('user_id', req.user.id); // Security check
-      
-    if (error) throw new Error(error.message);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+app.post('/api/templates', async (req, res) => {
+  if (!req.body || Object.keys(req.body).length === 0) {
+    return res.status(400).json({ error: 'Missing template data' });
   }
-});
-
-app.post('/api/templates/upload', authenticate, requireApproval, upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Missing file upload' });
-
   try {
-    // Check limit
-    const { count, error: countError } = await req.supabase
-      .from(TEMPLATES_TABLE)
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', req.user.id);
-      
-    if (countError) throw new Error(countError.message);
-    
-    if (count >= 3) {
-      return res.status(400).json({ error: 'Limit reached. You can only upload up to 3 templates. Please remove an old one.' });
+    const record = await writeTemplate(req.body);
+    if (!record) {
+      return res.status(500).json({ error: 'Failed to save template' });
     }
-
-    const raw = req.file.buffer.toString('utf8');
-    const json = JSON.parse(raw);
-    const filename = req.body.filename || req.body.name || json.name || req.file.originalname.replace(/\.json$/i, '');
-    const username = (req.body.username || '').trim() || filename;
-    // Use user's profile key if not provided, or template specific
-    const openaiKey = (req.body.openaiKey || req.body.apiKey || '').trim();
-
-    const insertPayload = {
-      user_id: req.user.id,
-      filename,
-      username,
-      json_data: json,
-      openai_key: openaiKey
-    };
-
-    const { data, error } = await req.supabase
-      .from(TEMPLATES_TABLE)
-      .insert(insertPayload)
-      .select()
-      .single();
-
-    if (error) throw new Error(error.message);
-
     res.status(201).json({
-      id: data.id,
-      name: data.filename,
-      username: data.username
+      id: record.id,
+      name: record.filename || record.id,
+      username: record.username || record.filename || record.id
     });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
-// --- History Routes ---
+app.post('/api/templates/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'Missing file upload' });
+  }
 
-app.get('/api/history', authenticate, async (req, res) => {
   try {
-    const { company } = req.query;
-    let query = req.supabase
-      .from(HISTORY_TABLE)
-      .select('*')
-      .eq('user_id', req.user.id);
-      
-    if (company) {
-      query = query.ilike('company_name', company);
+    const raw = req.file.buffer.toString('utf8');
+    const json = JSON.parse(raw);
+    const filename =
+      req.body.filename ||
+      req.body.name ||
+      json.name ||
+      req.file.originalname.replace(/\.json$/i, '');
+    const username = (req.body.username || '').trim() || filename;
+    const openaiKey = (req.body.openaiKey || req.body.apiKey || '').trim();
+    if (!openaiKey) {
+      return res.status(400).json({ error: 'Missing OpenAI API key' });
     }
-    
-    const { data, error } = await query.order('created_at', { ascending: false });
-      
-    if (error) throw new Error(error.message);
-    res.json({ history: data });
+    const payload = {
+      filename,
+      username,
+      data: json,
+      openaiKey
+    };
+    const record = await writeTemplate(payload);
+    res.status(201).json({
+      id: record.id,
+      name: record.filename || record.id,
+      username: record.username || record.filename || record.id
+    });
+  } catch (error) {
+    const message = error && error.message ? error.message : 'Upload failed';
+    const isJsonError = error instanceof SyntaxError;
+    const status = isJsonError ? 400 : 500;
+    res.status(status).json({ error: isJsonError ? 'Invalid JSON file' : message });
+  }
+});
+
+app.post('/api/convert-docx-to-pdf', upload.single('file'), async (req, res) => {
+  let tmpDir = null;
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: 'Missing DOCX file upload' });
+    }
+
+    const sofficePath = resolveSofficePath();
+    if (!sofficePath) {
+      return res.status(500).json({
+        error: 'LibreOffice not found. Set SOFFICE_PATH or install LibreOffice.'
+      });
+    }
+
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobbot-'));
+    const docxPath = path.join(tmpDir, 'resume.docx');
+    fs.writeFileSync(docxPath, req.file.buffer);
+
+    await new Promise((resolve, reject) => {
+      execFile(
+        sofficePath,
+        ['--headless', '--convert-to', 'pdf', '--outdir', tmpDir, docxPath],
+        { windowsHide: true },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+
+    const pdfPath = path.join(tmpDir, 'resume.pdf');
+    if (!fs.existsSync(pdfPath)) {
+      throw new Error('PDF conversion failed');
+    }
+
+    const pdfBuffer = fs.readFileSync(pdfPath);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="resume.pdf"');
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('[convert-docx-to-pdf] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (tmpDir) {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  }
+});
+
+function resolveSofficePath() {
+  const envPath = process.env.SOFFICE_PATH || process.env.LIBREOFFICE_PATH;
+  if (envPath && fs.existsSync(envPath)) return envPath;
+
+  const candidates = [
+    'C:\\\\Program Files\\\\LibreOffice\\\\program\\\\soffice.exe',
+    'C:\\\\Program Files (x86)\\\\LibreOffice\\\\program\\\\soffice.exe',
+    'soffice'
+  ];
+  for (const candidate of candidates) {
+    if (candidate === 'soffice') return candidate;
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+app.delete('/api/templates/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from(TEMPLATES_TABLE)
+      .delete()
+      .eq('id', req.params.id)
+      .select('id')
+      .limit(1);
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// --- Generation Logic (Authenticated) ---
-
-app.post('/api/generate', authenticate, requireApproval, async (req, res) => {
+app.post('/api/generate', async (req, res) => {
   try {
     const { templateId, jobDescription, position, company } = req.body || {};
     if (!templateId || !jobDescription) {
       return res.status(400).json({ error: 'Missing templateId or jobDescription' });
     }
 
-    // Fetch template
-    const { data: record, error: dbError } = await req.supabase
-      .from(TEMPLATES_TABLE)
-      .select('*')
-      .eq('id', templateId)
-      .eq('user_id', req.user.id)
-      .single();
-
-    if (dbError || !record) return res.status(404).json({ error: 'Template not found' });
-    
-    // Determine OpenAI Key (Template specific or Profile specific)
-    let apiKey = record.openai_key;
-    if (!apiKey && req.profile && req.profile.openai_key) {
-      apiKey = req.profile.openai_key;
+    const record = await readTemplateRecord(templateId);
+    if (!record) {
+      return res.status(404).json({ error: 'Template not found' });
     }
-    
-    if (!apiKey) {
-      return res.status(400).json({ error: 'Missing OpenAI API key. Please add it to your template or profile.' });
+    if (!record.openai_key) {
+      return res.status(400).json({ error: 'Missing OpenAI API key for this template' });
     }
 
-    const jdAnalysis = await analyzeJobDescription(apiKey, jobDescription);
+    const jdAnalysis = await analyzeJobDescription(record.openai_key, jobDescription);
     const finalPosition = position || jdAnalysis.position || 'Position';
     const finalCompany = company || jdAnalysis.company || 'Company';
 
-    // Duplicate Check
-    const { data: existingLogs } = await req.supabase
-      .from(HISTORY_TABLE)
-      .select('id')
-      .eq('user_id', req.user.id)
-      .ilike('company_name', finalCompany)
-      .limit(1);
-
-    const isDuplicate = existingLogs && existingLogs.length > 0;
-    
-    // Generate Resume
     const tailoredContent = await generateTailoredContent(
-      apiKey,
+      record.openai_key,
       record.json_data,
       jdAnalysis
     );
@@ -461,53 +277,16 @@ app.post('/api/generate', authenticate, requireApproval, async (req, res) => {
       tailoredContent.matchScore = Math.min(98, Math.max(95, score));
     }
 
-    // Log History
-    await req.supabase.from(HISTORY_TABLE).insert({
-      user_id: req.user.id,
-      template_id: templateId,
-      company_name: finalCompany,
-      position: finalPosition,
-      resume_data: tailoredContent
-    });
-
     res.json({
       success: true,
       resume: tailoredContent,
       extractedPosition: finalPosition,
-      extractedCompany: finalCompany,
-      warning: isDuplicate ? `Warning: You have already generated a resume for ${finalCompany}.` : null
+      extractedCompany: finalCompany
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
-
-// --- Existing Utilities (analyzeJobDescription, callOpenAI, etc.) ---
-
-// Helper function for OpenAI calls (Assumed to be in original code, re-implementing briefly for completeness if missing)
-async function callOpenAI(apiKey, prompt, maxTokens) {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o', // or gpt-4-turbo
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: maxTokens,
-      temperature: 0.7
-    })
-  });
-  
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error?.message || 'OpenAI API Error');
-  }
-  return data.choices[0].message.content;
-}
-
-// ... Copying the rest of the logic from original file ...
 
 async function analyzeJobDescription(apiKey, jobDescription) {
   const prompt = `Analyze this job description and extract the following in JSON format:
@@ -558,10 +337,12 @@ async function generateTailoredContent(apiKey, resumeData, jdAnalysis) {
   const website = info.portfolio || resumeData.website || 'Not provided';
   const github = info.github || resumeData.github || 'Not provided';
 
-  const prompt = `You are an expert resume writer specializing in ATS-optimized resumes. Your task is to tailor a resume to match a specific job posting.
+  const prompt = `You are a senior technical recruiter and ATS optimization expert.
+Generate a resume that is BOTH ATS-friendly and recruiter-friendly for a software engineering role.
 
-ORIGINAL RESUME DATA:
+ORIGINAL RESUME:
 Name: ${name}
+Headline: ${headline}
 Email: ${email}
 Phone: ${phone}
 Location: ${location}
@@ -580,79 +361,147 @@ ${formatEducation(resumeData.education)}
 Skills:
 ${formatSkills(resumeData.skills)}
 
-Certifications: ${resumeData.certifications?.join(', ') || 'Not provided'}
-
 JOB REQUIREMENTS:
-Position: ${jdAnalysis.position}
-Company: ${jdAnalysis.company}
-Required Skills: ${jdAnalysis.requiredSkills?.join(', ')}
-Preferred Skills: ${jdAnalysis.preferredSkills?.join(', ')}
-Key Responsibilities: ${jdAnalysis.keyResponsibilities?.join('; ')}
-Keywords to include: ${jdAnalysis.keywords?.join(', ')}
+Position: ${jdAnalysis.position || 'Not specified'}
+Company: ${jdAnalysis.company || 'Not specified'}
+Required Skills: ${jdAnalysis.requiredSkills?.join(', ') || 'Not specified'}
+Key Responsibilities: ${jdAnalysis.keyResponsibilities?.join('; ') || 'Not specified'}
+Keywords: ${jdAnalysis.keywords?.join(', ') || 'Not specified'}
 
-INSTRUCTIONS:
-1. Create a tailored resume that emphasizes relevant experience matching the job requirements
-2. Rewrite bullet points to incorporate relevant keywords naturally
-3. Write a compelling professional summary targeted to this specific role
-4. IMPORTANT: Only reframe existing experience - do not fabricate or add false information
-5. Maintain truthfulness while highlighting relevant aspects of the candidate's background
-6. Optimize for ATS by using keywords from the job description naturally
-7. CRITICAL: You MUST bold matching keywords and technologies in the bullet points using markdown syntax (e.g., **React**, **Python**, **CI/CD**).
-8. For skills, ALWAYS include these mandatory base skills in the appropriate categories:
-   - Frontend: React, TypeScript (always include)
-   - Backend: Node.js, Python (always include)
-   - Testing & Quality: Unit Testing, Cypress (always include)
-   - Collaboration: Agile, Cross-functional Teams, Mentorship (always include)
-9. Add additional relevant skills from the job requirements into the appropriate categories
-10. Each experience entry MUST have at least 5 bullet points (no fewer than 5)
-11. Each skills category MUST list at least 7 skills (no fewer than 7)
-12. Provide a match score between 95 and 98 (inclusive)
+STRICT CONTENT RULES:
+1. Read the entire job description end-to-end before generating any resume content.
+2. Treat the job description as the single source of truth for keywords, technologies,
+   architecture terms, tools, and expectations.
+3. Do not summarize or paraphrase the job description before processing.
 
-Return the tailored resume in the following JSON format:
+4. Scan the full job description line-by-line and extract as many keywords and key
+   tech stacks as possible, capturing them exactly as written.
+5. Collect keywords from the job title, responsibilities, required qualifications,
+   preferred qualifications, nice-to-have sections, and any architecture, scale, or
+   platform descriptions embedded in the text.
+
+6. Classify every extracted keyword into the following mandatory buckets:
+   a. Programming languages and runtimes
+   b. Frontend frameworks and libraries
+   c. Backend frameworks and APIs
+   d. Databases, caching, and data systems
+   e. Cloud platforms and infrastructure
+   f. DevOps, CI/CD, and automation
+   g. Architecture and system design concepts
+   h. Security, compliance, and authentication
+   i. Testing, quality, and reliability
+   j. Performance, scale, and metrics
+   k. Methodologies, processes, and collaboration
+   l. AI, machine learning, and LLM systems or integrations
+
+7. Do not normalize, replace, or infer technologies during extraction.
+8. All keywords must initially remain literal to the job description wording.
+
+9. Assign a priority to each keyword:
+   a. P1 (Critical): appears in the job title, required section, or multiple times
+   b. P2 (Important): appears once or in preferred sections
+   c. P3 (Supporting): implied by responsibilities or architectural language
+
+10. For each keyword, acceptable variants may be added only as secondary mentions.
+11. The original job-description wording is mandatory and must never be replaced.
+12. Do not substitute one technology for another.
+13. Do not generalize platforms.
+14. Do not infer alternatives.
+
+15. Directly inject extracted job-description keywords and tech stacks into the resume
+    content.
+16. Do not use merely related or similar technologies as substitutes.
+17. Maximize keyword coverage while maintaining logical consistency with the original
+    resume.
+
+18. If a job-description technology does not exist in the original resume, it must
+    still be included by integrating it realistically into existing responsibilities
+    as usage, collaboration, optimization, migration, integration, or exposure.
+19. Never invent new roles, companies, job titles, or project domains.
+
+20. Generate a senior-level target title that closely mirrors the job description
+    title and aligns with the candidate’s career progression.
+
+21. The Professional Summary must be exactly 3–4 lines, senior-level, ATS-optimized,
+    and natural.
+22. The summary must explicitly reference system scale, performance, reliability,
+    architecture, and business impact.
+23. The summary must not include company names or personal pronouns.
+24. The summary must include direct P1 and P2 job-description keywords.
+25. All technology names must be bolded using double asterisks.
+
+26. Use past tense for previous roles and present tense only for the current role.
+27. Each role must contain 5–7 bullets.
+28. Each bullet must be one sentence only.
+29. No paragraphs are allowed.
+
+30. Every experience bullet must follow this exact structure:
+    Action Verb -> What was done -> Technologies used (bolded) -> Outcome or impact
+
+31. Only 2–3 bullets per role may include measurable impact such as percentage
+    improvements, scale, performance, reliability, cost, or time saved.
+
+32. Every bullet must include at least one bolded P1 or P2 technology from the job
+    description unless the bullet is purely leadership, mentorship, or strategy
+    focused.
+33. Each bullet may include 1–3 bolded technologies selected strictly from
+    job-description priorities.
+34. Bold only technology names, never full phrases or sentences.
+
+35. The Skills section must be grouped exactly into the following categories:
+    a. Frontend
+    b. Backend
+    c. Databases
+    d. Cloud & DevOps
+    e. Testing & Quality
+    f. Security & Compliance
+    g. AI & LLM Systems
+    h. Architecture & System Design
+    i. Performance, Scale & Metrics
+    j. Methodologies & Collaboration
+    k. Programming Languages & Runtimes
+    l. Soft Skills
+
+36. Each skills category must include at least six skills.
+
+37. Mandatory skills:
+    a. Frontend must always include React, JavaScript, and TypeScript
+    b. Backend must always include Node.js and Python
+    c. Cloud & DevOps must always include AWS, GCP, and Azure, CI/CD, Docker, and Terraform
+    d. Databases must always include PostgreSQL and Redis
+    e. Testing must always include Unit Testing and Integration Testing
+
+38. All job-description technologies must appear in both Skills and Experience.
+
+39. Dates for experience and education must be formatted exactly as:
+    MMM YYYY - MMM YYYY
+
+40. Before final output, validate that:
+    a. 100% of P1 keywords are included
+    b. At least 90% of P2 keywords are included
+    c. No fabricated technologies exist
+    d. All keywords are used in logical contexts
+
+41. If validation fails, regenerate the resume until compliance is met.
+
+42. Provide a final job match score between 95 and 98 inclusive.
+
+Return JSON:
 {
   "matchScore": 96,
-  "contact": {
-    "name": "string",
-    "email": "string",
-    "phone": "string",
-    "location": "string",
-    "linkedin": "string",
-    "website": "string",
-    "github": "string"
-  },
-  "summary": "2-3 sentence professional summary tailored to this role",
-  "experience": [
-    {
-      "title": "Job Title",
-      "company": "Company Name",
-      "dates": "Start - End",
-      "location": "City, State",
-      "bullets": ["Achievement 1", "Achievement 2", "Achievement 3"]
-    }
-  ],
-  "education": [
-    {
-      "school": "University Name",
-      "faculty": "Field of Study/Major",
-      "degree": "Degree",
-      "dates": "Start - End",
-      "gpa": "GPA if applicable",
-      "honors": "Honors if applicable"
-    }
-  ],
+  "targetTitle": "Target Job Title",
+  "contact": {"name": "", "email": "", "phone": "", "location": "", "linkedin": "", "github": ""},
+  "summary": "3-4 line tailored summary",
+  "experience": [{"title": "", "company": "", "dates": "MMM YYYY - MMM YYYY", "location": "", "bullets": ["achievement 1", "achievement 2", "achievement 3", "achievement 4", "achievement 5"]}],
+  "education": [{"school": "University Name", "degree": "Degree", "dates": "MMM YYYY - MMM YYYY", "faculty": "Major/Minor"}],
   "skills": {
-    "frontend": ["React", "TypeScript", "...additional"],
-    "backend": ["Node.js", "Python", "...additional"],
-    "database": ["...relevant database skills"],
-    "security": ["...relevant security skills"],
-    "ai_llm": ["...relevant AI & LLM skills"],
-    "cloud_devops": ["...relevant cloud/devops skills"],
-    "testing": ["Unit Testing", "Cypress", "...additional"],
-    "collaboration": ["Agile", "Cross-functional Teams", "Mentorship", "...additional"],
-    "technical": ["...relevant technical skills"],
-    "soft": ["...relevant soft skills"]
+    "frontend": ["React", "JavaScript", "TypeScript", "...additional skills"],
+    "backend": ["Node.js", "Python", "REST APIs", "Microservices", "...additional skills"],
+    "databases": ["PostgreSQL", "Redis", "NoSQL", "...additional skills"],
+    "cloud_devops": ["AWS", "Docker", "CI/CD", "Terraform", "...additional skills"],
+    "testing": ["Unit Testing", "Integration Testing", "...additional skills"]
   },
-  "certifications": ["Certification 1", "Certification 2"]
+  "certifications": []
 }
 
 Return ONLY valid JSON.`;
@@ -735,24 +584,51 @@ function formatSkills(skills) {
       cloud_devops: 'Cloud & DevOps',
       cloudDevOps: 'Cloud & DevOps',
       testing: 'Testing & Quality',
-      architecture: 'Architecture & System Design',
-      performance: 'Performance, Scale & Metrics',
-      methodologies: 'Methodologies & Collaboration',
-      languages: 'Programming Languages',
-      soft_skills: 'Soft Skills',
       collaboration: 'Collaboration',
       technical: 'Technical',
       soft: 'Soft Skills'
     };
-    return Object.entries(skills)
-      .map(([key, val]) => {
-        const label = categoryLabels[key] || key;
-        const valStr = Array.isArray(val) ? val.join(', ') : val;
-        return `${label}: ${valStr}`;
-      })
-      .join('\n');
+    const parts = [];
+    for (const [category, items] of Object.entries(skills)) {
+      if (Array.isArray(items) && items.length > 0) {
+        const label = categoryLabels[category] || category;
+        parts.push(`${label}: ${items.join(', ')}`);
+      }
+    }
+    return parts.length > 0 ? parts.join('\n') : 'Not provided';
   }
-  return JSON.stringify(skills);
+  return String(skills);
+}
+
+function formatExperience(experience) {
+  if (!experience || experience.length === 0) return 'Not provided';
+
+  return experience.map(exp => {
+    const title = exp.title || exp.role || 'Position';
+    const dates = exp.dates || combineDates(exp.startDate, exp.endDate) || '';
+    const bullets = exp.bullets || exp.highlights || [];
+    let text = `${title} at ${exp.company || 'Company'}`;
+    if (dates) text += ` (${dates})`;
+    if (exp.location) text += ` - ${exp.location}`;
+    if (bullets.length > 0) {
+      text += '\n' + bullets.map(b => `  - ${b}`).join('\n');
+    }
+    return text;
+  }).join('\n\n');
+}
+
+function formatEducation(education) {
+  if (!education || education.length === 0) return 'Not provided';
+
+  return education.map(edu => {
+    let text = edu.degree || 'Degree';
+    const school = edu.school || edu.institution || edu.university || '';
+    const dates = edu.dates || combineDates(edu.startDate, edu.endDate) || '';
+    if (school) text += ` - ${school}`;
+    if (dates) text += ` (${dates})`;
+    if (edu.notes) text += ` [${edu.notes}]`;
+    return text;
+  }).join('\n');
 }
 
 function combineDates(start, end) {
@@ -760,103 +636,92 @@ function combineDates(start, end) {
   return `${start || ''}${start && end ? ' - ' : ''}${end || ''}`;
 }
 
-function formatExperience(experience) {
-  if (!experience) return 'Not provided';
-  if (!Array.isArray(experience)) return JSON.stringify(experience);
-  return experience.map(role => {
-    const dates = role.dates || role.period || combineDates(role.startDate, role.endDate);
-    return `
-Title: ${role.title || role.role || 'Position'}
-Company: ${role.company || 'Company'}
-Dates: ${dates}
-Location: ${role.location || 'Remote'}
-Responsibilities:
-${(role.bullets || role.responsibilities || role.highlights || []).map(b => '- ' + b).join('\n')}
-`;
-  }).join('\n');
-}
+async function callOpenAI(apiKey, prompt, maxTokens = 2000) {
+  console.log(`[callOpenAI] Sending request with max_output_tokens: ${maxTokens}`);
 
-function formatEducation(education) {
-  if (!education) return 'Not provided';
-  if (!Array.isArray(education)) return JSON.stringify(education);
-  return education.map(edu => {
-    const dates = edu.dates || edu.year || combineDates(edu.startDate, edu.endDate);
-    return `
-School: ${edu.school || edu.institution || 'Institution'}
-Degree: ${edu.degree || 'Degree'}
-Dates: ${dates}
-Faculty: ${edu.faculty || edu.major || ''}
-`;
-  }).join('\n');
-}
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: 'gpt-5.2',
+      instructions: 'You are an expert resume writer. Always respond with valid JSON when requested.',
+      input: prompt,
+      text: { format: { type: 'json_object' } },
+      max_output_tokens: maxTokens,
+      temperature: 0.7
+    })
+  });
 
-// Convert DOCX to PDF
-app.post('/api/convert-docx-to-pdf', upload.single('file'), async (req, res) => {
-  let tmpDir = null;
-  try {
-    if (!req.file || !req.file.buffer) {
-      return res.status(400).json({ error: 'Missing DOCX file upload' });
-    }
+  if (!response.ok) {
+    const error = await response.json();
+    console.error('[callOpenAI] API error:', JSON.stringify(error, null, 2));
+    throw new Error(error.error?.message || 'OpenAI API error');
+  }
 
-    const sofficePath = resolveSofficePath();
-    if (!sofficePath) {
-      return res.status(500).json({
-        error: 'LibreOffice not found. Set SOFFICE_PATH or install LibreOffice.'
-      });
-    }
+  const data = await response.json();
 
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobbot-'));
-    const docxPath = path.join(tmpDir, 'resume.docx');
-    fs.writeFileSync(docxPath, req.file.buffer);
+  console.log('[callOpenAI] Response keys:', Object.keys(data));
+  console.log('[callOpenAI] Has output_text:', !!data.output_text);
+  console.log('[callOpenAI] Status:', data.status);
+  if (data.usage) {
+    console.log('[callOpenAI] Usage:', JSON.stringify(data.usage));
+  }
+  if (data.incomplete_details) {
+    console.log('[callOpenAI] Incomplete details:', JSON.stringify(data.incomplete_details));
+  }
 
-    await new Promise((resolve, reject) => {
-      execFile(
-        sofficePath,
-        ['--headless', '--convert-to', 'pdf', '--outdir', tmpDir, docxPath],
-        { windowsHide: true },
-        (err) => (err ? reject(err) : resolve())
-      );
-    });
-
-    const pdfPath = path.join(tmpDir, 'resume.pdf');
-    if (!fs.existsSync(pdfPath)) {
-      throw new Error('PDF conversion failed');
-    }
-
-    const pdfBuffer = fs.readFileSync(pdfPath);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename="resume.pdf"');
-    res.send(pdfBuffer);
-  } catch (error) {
-    console.error('[convert-docx-to-pdf] Error:', error.message);
-    res.status(500).json({ error: error.message });
-  } finally {
-    if (tmpDir) {
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        // ignore cleanup errors
+  // Try multiple response fields - API versions vary
+  let text = data.output_text;
+  if (!text && data.output && Array.isArray(data.output)) {
+    for (const item of data.output) {
+      if (item.type === 'message' && item.content) {
+        for (const block of item.content) {
+          if ((block.type === 'output_text' || block.type === 'text') && block.text) {
+            text = block.text;
+            break;
+          }
+        }
       }
+      if (text) break;
     }
   }
-});
-
-function resolveSofficePath() {
-  const envPath = process.env.SOFFICE_PATH || process.env.LIBREOFFICE_PATH;
-  if (envPath && fs.existsSync(envPath)) return envPath;
-
-  const candidates = [
-    'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
-    'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe',
-    'soffice'
-  ];
-  for (const candidate of candidates) {
-    if (candidate === 'soffice') return candidate;
-    if (fs.existsSync(candidate)) return candidate;
+  if (!text && data.output && Array.isArray(data.output)) {
+    console.log('[callOpenAI] Output types:', data.output.map(item => item.type));
   }
-  return null;
+
+  // Normalize text to a string to avoid substring() errors on non-strings.
+  if (Array.isArray(text)) {
+    text = text.join('');
+  } else if (text && typeof text === 'object') {
+    if (typeof text.text === 'string') {
+      text = text.text;
+    } else if (typeof text.value === 'string') {
+      text = text.value;
+    } else {
+      text = JSON.stringify(text);
+    }
+  }
+  if (typeof text !== 'string') {
+    text = String(text || '');
+  }
+
+  if (!text) {
+    console.error('[callOpenAI] No text found in response. Full response:', JSON.stringify(data, null, 2).substring(0, 2000));
+    throw new Error('No text in API response');
+  }
+
+  console.log('[callOpenAI] Response text length:', text.length);
+  console.log('[callOpenAI] Response text (first 200 chars):', text.substring(0, 200));
+  console.log('[callOpenAI] Response text (last 100 chars):', text.substring(text.length - 100));
+
+  return text;
 }
+
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`JobBot backend running on http://localhost:${PORT}`);
 });
